@@ -12,7 +12,7 @@ app.get('/', (req, res) => {
   res.send('✅ Voicebot backend is live and running.');
 });
 
-app.use('/routes', require('./routes/test-ai'));
+app.use('/test-ai', require('./routes/test-ai'));
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
