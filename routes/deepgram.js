@@ -1,8 +1,9 @@
 const express = require('express');
-const { Deepgram } = require('@deepgram/sdk');
+const { createClient } = require('@deepgram/sdk');
 const router = express.Router();
 
-const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
+// ✅ Create the Deepgram client using the new v4+ method
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 router.post('/transcribe', async (req, res) => {
   try {
@@ -12,17 +13,18 @@ router.post('/transcribe', async (req, res) => {
       return res.status(400).json({ error: 'Missing audioUrl in request body.' });
     }
 
-    const response = await deepgram.transcription.preRecorded(
-      { url: audioUrl },
-      {
-        punctuate: true,
-        model: 'nova'
-      }
-    );
+    // ✅ New format for transcription
+    const { result, error } = await deepgram.listen.prerecorded.transcribeUrl(audioUrl, {
+      model: 'nova',
+      smart_format: true,
+    });
 
-    const transcript = response?.results?.channels?.[0]?.alternatives?.[0]?.transcript;
+    if (error) {
+      console.error('Transcription error:', error);
+      return res.status(500).json({ error: 'Failed to transcribe audio.' });
+    }
 
-    res.json({ transcript });
+    res.json({ transcript: result.results.channels[0].alternatives[0].transcript });
   } catch (error) {
     console.error('Deepgram error:', error);
     res.status(500).json({ error: 'Failed to transcribe audio' });
@@ -30,6 +32,7 @@ router.post('/transcribe', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
