@@ -3,11 +3,12 @@ const app = express();
 const dotenv = require('dotenv');
 const http = require('http');
 const WebSocket = require('ws');
-const { Deepgram } = require('@deepgram/sdk');
-const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
+const { createClient } = require('@deepgram/sdk');
 
 dotenv.config();
 app.use(express.json());
+
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 app.get('/', (req, res) => {
   res.send('✅ Voicebot backend is live and running.');
@@ -24,34 +25,35 @@ const wss = new WebSocket.Server({ server, path: '/ws' });
 wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
 
-  const deepgramLive = deepgram.transcription.live({
-    punctuate: true,
+  const dgConnection = deepgram.listen.live({
+    model: 'nova',
+    smart_format: true,
     language: 'en',
     encoding: 'mulaw',
     sample_rate: 8000
   });
 
-  deepgramLive.on('transcriptReceived', (data) => {
-    const transcript = JSON.parse(data).channel?.alternatives[0]?.transcript;
+  dgConnection.on('transcriptReceived', (data) => {
+    const transcript = data.channel?.alternatives[0]?.transcript;
     if (transcript && transcript.length > 0) {
       console.log('📝 Transcript:', transcript);
     }
   });
 
-  deepgramLive.on('error', (err) => {
+  dgConnection.on('error', (err) => {
     console.error('Deepgram error:', err);
   });
 
   ws.on('message', (msg) => {
-    if (deepgramLive) {
-      deepgramLive.send(msg);
+    if (dgConnection) {
+      dgConnection.send(msg);
     }
   });
 
   ws.on('close', () => {
     console.log('🔴 WebSocket closed');
-    if (deepgramLive) {
-      deepgramLive.finish();
+    if (dgConnection) {
+      dgConnection.finish();
     }
   });
 });
@@ -60,6 +62,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+
 
 
 
