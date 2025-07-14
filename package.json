@@ -1,4 +1,3 @@
-
 {
   "name": "voicebot-backend",
   "version": "1.0.0",
@@ -10,6 +9,10 @@
     "axios": "^1.6.0",
     "dotenv": "^16.0.0",
     "express": "^4.18.0",
-    "ws": "^8.13.0"
+    "ws": "^8.13.0",
+    "@deepgram/sdk": "^4.5.2",
+    "openai": "^4.30.0",
+    "twilio": "^4.10.0",
+    "node-fetch": "^3.3.2"
   }
 }
