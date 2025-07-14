@@ -16,7 +16,7 @@ router.post('/speak', async (req, res) => {
   try {
     const response = await axios({
       method: 'post',
-      url: `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+      url: `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/stream`, // ✅ corrected URL
       headers: {
         'xi-api-key': ELEVENLABS_API_KEY,
         'Content-Type': 'application/json',
@@ -36,10 +36,11 @@ router.post('/speak', async (req, res) => {
     res.setHeader('Content-Type', 'audio/mpeg');
     res.send(response.data);
   } catch (error) {
-    console.error('ElevenLabs error:', error.message);
+    console.error('ElevenLabs error:', error.response?.data || error.message);
     res.status(500).json({ error: 'Failed to generate speech' });
   }
 });
 
 module.exports = router;
+
 
