@@ -16,11 +16,13 @@ router.post('/transcribe', async (req, res) => {
       { url: audioUrl },
       {
         punctuate: true,
-        model: 'nova',
+        model: 'nova'
       }
     );
 
-    res.json({ transcript: response.results.channels[0].alternatives[0].transcript });
+    const transcript = response?.results?.channels?.[0]?.alternatives?.[0]?.transcript;
+
+    res.json({ transcript });
   } catch (error) {
     console.error('Deepgram error:', error);
     res.status(500).json({ error: 'Failed to transcribe audio' });
@@ -28,6 +30,7 @@ router.post('/transcribe', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
