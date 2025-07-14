@@ -2,7 +2,6 @@ const express = require('express');
 const { createClient } = require('@deepgram/sdk');
 const router = express.Router();
 
-// ✅ Create the Deepgram client using the new v4+ method
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 router.post('/transcribe', async (req, res) => {
@@ -13,7 +12,6 @@ router.post('/transcribe', async (req, res) => {
       return res.status(400).json({ error: 'Missing audioUrl in request body.' });
     }
 
-    // ✅ New format for transcription
     const { result, error } = await deepgram.listen.prerecorded.transcribeUrl(audioUrl, {
       model: 'nova',
       smart_format: true,
@@ -32,6 +30,7 @@ router.post('/transcribe', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
