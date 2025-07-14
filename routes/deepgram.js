@@ -1,13 +1,12 @@
 const express = require('express');
 const router = express.Router();
 
-let Deepgram;
 let deepgram;
 
+// Load Deepgram SDK dynamically using import (required for v3+ in CommonJS)
 (async () => {
-  // Dynamically import ESM SDK
   const sdk = await import('@deepgram/sdk');
-  Deepgram = sdk.Deepgram;
+  const Deepgram = sdk.Deepgram;
   deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
 })();
 
@@ -37,6 +36,7 @@ router.post('/transcribe', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
