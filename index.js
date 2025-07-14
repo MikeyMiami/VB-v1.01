@@ -14,16 +14,18 @@ app.get('/', (req, res) => {
 // Routes
 app.use('/test-ai', require('./routes/test-ai'));
 app.use('/deepgram', require('./routes/deepgram'));
+app.use('/elevenlabs', require('./routes/elevenlabs'));
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws) => {
-  console.log('🔗 New WebSocket connection established');
+  console.log('🟢 New WebSocket connection established');
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+
 
