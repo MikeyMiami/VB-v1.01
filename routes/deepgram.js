@@ -1,29 +1,36 @@
 const express = require('express');
-const { Deepgram } = require('@deepgram/sdk');
 const router = express.Router();
+const { createClient } = require('@deepgram/sdk');
 
-const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
-const deepgram = new Deepgram(deepgramApiKey);
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
-// POST /deepgram-transcribe
-router.post('/deepgram-transcribe', async (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const audioUrl = req.body.url;
-
+    const audioUrl = req.body.audio_url;
     if (!audioUrl) {
-      return res.status(400).json({ error: 'Audio URL is required' });
+      return res.status(400).json({ error: 'audio_url is required' });
     }
 
-    const response = await deepgram.transcription.preRecorded(
-      { url: audioUrl },
-      { punctuate: true, language: 'en' }
+    const { result, error } = await deepgram.listen.prerecorded.transcribeUrl(
+      {
+        url: audioUrl,
+      },
+      {
+        model: 'nova',
+        smart_format: true,
+      }
     );
 
-    res.json({ transcript: response.results.channels[0].alternatives[0].transcript });
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json(result);
   } catch (err) {
-    console.error('Deepgram Error:', err.message);
-    res.status(500).json({ error: 'Failed to transcribe audio' });
+    console.error('❌ Deepgram error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 module.exports = router;
+
