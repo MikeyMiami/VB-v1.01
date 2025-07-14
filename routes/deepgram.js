@@ -1,33 +1,26 @@
 const express = require('express');
+const { Deepgram } = require('@deepgram/sdk');
 const router = express.Router();
 
-let deepgram;
-
-// Dynamically import the ESM Deepgram SDK inside CommonJS
-(async () => {
-  const { Deepgram } = await import('@deepgram/sdk');
-  deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
-})();
+const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
 
 router.post('/transcribe', async (req, res) => {
-  const { audioUrl } = req.body;
-
-  if (!audioUrl) {
-    return res.status(400).json({ error: 'Audio URL is required' });
-  }
-
   try {
+    const { audioUrl } = req.body;
+
+    if (!audioUrl) {
+      return res.status(400).json({ error: 'Missing audioUrl in request body.' });
+    }
+
     const response = await deepgram.transcription.preRecorded(
       { url: audioUrl },
       {
         punctuate: true,
-        model: 'general',
-        language: 'en-US',
+        model: 'nova',
       }
     );
 
-    const transcript = response.results.channels[0].alternatives[0].transcript;
-    res.json({ transcript });
+    res.json({ transcript: response.results.channels[0].alternatives[0].transcript });
   } catch (error) {
     console.error('Deepgram error:', error);
     res.status(500).json({ error: 'Failed to transcribe audio' });
@@ -35,6 +28,7 @@ router.post('/transcribe', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
