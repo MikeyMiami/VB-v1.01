@@ -13,7 +13,7 @@
     "@deepgram/sdk": "^4.5.2",
     "openai": "^4.30.0",
     "twilio": "^4.10.0",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
     "uuid": "^9.0.1"
   }
 }
