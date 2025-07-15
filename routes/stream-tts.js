@@ -7,8 +7,8 @@ router.ws('/stream-tts', (ws, req) => {
   ws.on('message', async (text) => {
     console.log('📩 Text chunk received:', text);
 
-    // Connect to ElevenLabs streaming endpoint
-    const ttsSocket = new WebSocket(`wss://api.elevenlabs.io/v1/text-to-speech/YOUR_VOICE_ID/stream`, {
+    const voiceId = process.env.ELEVENLABS_VOICE_ID;
+    const ttsSocket = new WebSocket(`wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`, {
       headers: {
         'xi-api-key': process.env.ELEVENLABS_API_KEY,
         'Accept': 'audio/mpeg',
@@ -28,11 +28,11 @@ router.ws('/stream-tts', (ws, req) => {
     });
 
     ttsSocket.on('message', (audioChunk) => {
-      // Send audio chunk to frontend
       ws.send(audioChunk);
     });
 
     ttsSocket.on('close', () => ws.close());
+
     ttsSocket.on('error', (err) => {
       console.error('❌ TTS Streaming Error:', err.message);
       ws.send(JSON.stringify({ error: err.message }));
@@ -41,3 +41,4 @@ router.ws('/stream-tts', (ws, req) => {
 });
 
 module.exports = router;
+
