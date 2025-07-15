@@ -33,20 +33,25 @@ router.post('/start', async (req, res) => {
   }
 });
 
-// POST /twilio-call/voice (Twilio webhook for call media)
+// POST /twilio-call/voice
 router.post('/voice', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
 
+  // Start the Deepgram stream
   twiml.say('Connecting you to the AI agent now.');
   twiml.start().stream({
     url: DEEPGRAM_SOCKET_URL
   });
+
+  // Keep the call alive with a long pause so audio can stream
+  twiml.pause({ length: 60 }); // 60 seconds
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
 module.exports = router;
+
 
 
 
