@@ -11,6 +11,9 @@ const expressWs = require('express-ws')(app);
 dotenv.config();
 app.use(express.json());
 app.use(cors()); // ✅ Add CORS support for browser testing
+// ✅ Handle CORS preflight for all routes
+app.options('*', cors());
+
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
