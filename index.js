@@ -11,10 +11,14 @@ const expressWs = require('express-ws')(app);
 dotenv.config();
 
 // ✅ Middleware
-app.use(express.json()); // <-- Required to read JSON body
+app.use(express.json()); // required to parse JSON body
 app.use(cors());
-app.options('*', cors()); // Preflight handling
+app.options('*', cors()); // preflight
 
+// ✅ Static audio files
+app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
+
+// ✅ Deepgram setup
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 // ✅ Health check
@@ -22,8 +26,20 @@ app.get('/', (req, res) => {
   res.send('✅ Voicebot backend is live and running.');
 });
 
-// ✅ Static audio access
-app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
+// ✅ Routes (load AI routes first)
+app.use('/voice-agent/stream', require('./routes/voice-agent-stream')); // ← GPT SSE route
+app.use('/voice-agent', require('./routes/voice-agent'));
+app.use('/stream-tts', require('./routes/stream-tts'));
+app.use('/gpt', require('./routes/gpt'));
+app.use('/stream-gpt', require('./routes/stream-gpt'));
+app.use('/stream-playback', require('./routes/stream-playback'));
+app.use('/test-ai', require('./routes/test-ai'));
+app.use('/deepgram', require('./routes/deepgram'));
+app.use('/elevenlabs', require('./routes/elevenlabs'));
+app.use('/outbound', require('./routes/outbound'));
+app.use('/twilio-call', require('./routes/twilio-call'));
+app.use('/playback', require('./routes/playback'));
+app.use('/realtime', require('./routes/realtime'));
 
 // ✅ Debug route
 app.get('/debug-route', (req, res) => {
@@ -31,28 +47,13 @@ app.get('/debug-route', (req, res) => {
   res.status(200).send('OK - Debug route is alive');
 });
 
-// ✅ Application routes
-app.use('/test-ai', require('./routes/test-ai'));
-app.use('/deepgram', require('./routes/deepgram'));
-app.use('/elevenlabs', require('./routes/elevenlabs'));
-app.use('/outbound', require('./routes/outbound'));
-app.use('/twilio-call', require('./routes/twilio-call'));
-app.use('/playback', require('./routes/playback'));
-app.use('/gpt', require('./routes/gpt'));
-app.use('/stream-gpt', require('./routes/stream-gpt'));
-app.use('/stream-playback', require('./routes/stream-playback'));
-app.use('/realtime', require('./routes/realtime'));
-app.use('/stream-tts', require('./routes/stream-tts'));
-app.use('/voice-agent', require('./routes/voice-agent'));
-app.use('/voice-agent/stream', require('./routes/voice-agent-stream')); // <-- GPT streaming POST endpoint
-
-// ✅ Catch-all for unknown POSTs
+// ✅ Unknown POST catcher
 app.post('*', (req, res) => {
-  console.log('⚠️ Unknown POST path hit:', req.path);
+  console.warn('⚠️ Unknown POST path hit:', req.path);
   res.status(404).send('Not found');
 });
 
-// ✅ WebSocket Server setup
+// ✅ WebSocket server
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
@@ -69,7 +70,7 @@ wss.on('connection', async (ws) => {
 
   dgConnection.on('transcriptReceived', (data) => {
     const transcript = data.channel?.alternatives[0]?.transcript;
-    if (transcript && transcript.length > 0) {
+    if (transcript?.length > 0) {
       console.log('📝 Transcript:', transcript);
     }
   });
@@ -79,24 +80,21 @@ wss.on('connection', async (ws) => {
   });
 
   ws.on('message', (msg) => {
-    if (dgConnection) {
-      dgConnection.send(msg);
-    }
+    if (dgConnection) dgConnection.send(msg);
   });
 
   ws.on('close', () => {
     console.log('🔴 WebSocket closed');
-    if (dgConnection) {
-      dgConnection.finish();
-    }
+    if (dgConnection) dgConnection.finish();
   });
 });
 
-// ✅ Start the server
+// ✅ Server start
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+
 
 
 
