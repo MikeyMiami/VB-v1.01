@@ -1,15 +1,19 @@
 const express = require('express');
-const app = express();
 const dotenv = require('dotenv');
+const path = require('path');
 const http = require('http');
 const WebSocket = require('ws');
-const path = require('path');
 const { createClient } = require('@deepgram/sdk');
-const expressWs = require('express-ws')(app);
 
 dotenv.config();
+
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server, path: '/ws' });
+
 app.use(express.json());
 
+// ✅ Deepgram Client
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 // ✅ Health Check
@@ -17,10 +21,10 @@ app.get('/', (req, res) => {
   res.send('✅ Voicebot backend is live and running.');
 });
 
-// ✅ Static Audio Files
+// ✅ Serve Static Audio Files
 app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
 
-// ✅ Routes
+// ✅ API Routes
 app.use('/test-ai', require('./routes/test-ai'));
 app.use('/deepgram', require('./routes/deepgram'));
 app.use('/elevenlabs', require('./routes/elevenlabs'));
@@ -33,10 +37,7 @@ app.use('/stream-playback', require('./routes/stream-playback'));
 app.use('/realtime', require('./routes/realtime'));
 app.use('/stream-tts', require('./routes/stream-tts'));
 
-// ✅ WebSocket Server
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server, path: '/ws' });
-
+// ✅ WebSocket Listener
 wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
 
@@ -56,7 +57,7 @@ wss.on('connection', async (ws) => {
   });
 
   dgConnection.on('error', (err) => {
-    console.error('Deepgram error:', err);
+    console.error('❌ Deepgram error:', err);
   });
 
   ws.on('message', (msg) => {
@@ -78,6 +79,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+
 
 
 
