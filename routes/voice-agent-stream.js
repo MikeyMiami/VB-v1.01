@@ -1,4 +1,5 @@
 // routes/voice-agent-stream.js
+console.log("✅ voice-agent-stream route loaded");
 const express = require('express');
 const router = express.Router();
 const { OpenAI } = require('openai');
