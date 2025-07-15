@@ -1,26 +1,17 @@
 const express = require('express');
+const app = express();
 const dotenv = require('dotenv');
-const path = require('path');
 const http = require('http');
-const cors = require('cors');
 const WebSocket = require('ws');
+const path = require('path');
+const cors = require('cors');
 const { createClient } = require('@deepgram/sdk');
+const expressWs = require('express-ws')(app);
 
 dotenv.config();
-
-const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server, path: '/ws' });
-
-// ✅ Middleware
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
 app.use(express.json());
+app.use(cors()); // ✅ Add CORS support for browser testing
 
-// ✅ Deepgram Client
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 // ✅ Health Check
@@ -28,10 +19,10 @@ app.get('/', (req, res) => {
   res.send('✅ Voicebot backend is live and running.');
 });
 
-// ✅ Serve Static Audio Files
+// ✅ Static Audio Files
 app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
 
-// ✅ API Routes
+// ✅ Routes
 app.use('/test-ai', require('./routes/test-ai'));
 app.use('/deepgram', require('./routes/deepgram'));
 app.use('/elevenlabs', require('./routes/elevenlabs'));
@@ -42,10 +33,13 @@ app.use('/gpt', require('./routes/gpt'));
 app.use('/stream-gpt', require('./routes/stream-gpt'));
 app.use('/stream-playback', require('./routes/stream-playback'));
 app.use('/realtime', require('./routes/realtime'));
-app.use('/stream-tts', require('./routes/stream-tts'));
-app.use('/voice-agent', require('./routes/voice-agent'));
+app.use('/stream-tts', require('./routes/stream-tts')); // ✅ WebSocket route for ElevenLabs stream
+app.use('/voice-agent', require('./routes/voice-agent')); // ✅ Real-time voice agent route
 
-// ✅ WebSocket Listener
+// ✅ WebSocket Server
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server, path: '/ws' });
+
 wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
 
@@ -65,7 +59,7 @@ wss.on('connection', async (ws) => {
   });
 
   dgConnection.on('error', (err) => {
-    console.error('❌ Deepgram error:', err);
+    console.error('Deepgram error:', err);
   });
 
   ws.on('message', (msg) => {
