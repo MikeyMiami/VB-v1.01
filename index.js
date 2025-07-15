@@ -18,6 +18,8 @@ app.get('/', (req, res) => {
 app.use('/test-ai', require('./routes/test-ai'));
 app.use('/deepgram', require('./routes/deepgram'));
 app.use('/elevenlabs', require('./routes/elevenlabs'));
+app.use('/outbound', require('./routes/outbound'));
+
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
