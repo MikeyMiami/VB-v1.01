@@ -7,7 +7,7 @@ const router = express.Router();
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
-
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const AUDIO_FOLDER = path.join(__dirname, '..', 'public', 'audio');
 
 // Ensure audio folder exists
@@ -24,7 +24,28 @@ router.post('/generate', async (req, res) => {
   }
 
   try {
-    const response = await axios({
+    // 🔹 1. Get GPT reply
+    const gptRes = await axios({
+      method: 'post',
+      url: 'https://api.openai.com/v1/chat/completions',
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      data: {
+        model: 'gpt-4',
+        messages: [
+          { role: 'system', content: 'You are a helpful AI voice assistant.' },
+          { role: 'user', content: message }
+        ]
+      }
+    });
+
+    const gptReply = gptRes.data.choices[0].message.content;
+    console.log('🤖 GPT Response:', gptReply);
+
+    // 🔹 2. Send GPT reply to ElevenLabs for TTS
+    const elevenRes = await axios({
       method: 'post',
       url: `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
       headers: {
@@ -33,7 +54,7 @@ router.post('/generate', async (req, res) => {
         'Accept': 'audio/mpeg'
       },
       data: {
-        text: message,
+        text: gptReply,
         model_id: 'eleven_monolingual_v1',
         voice_settings: {
           stability: 0.4,
@@ -43,19 +64,21 @@ router.post('/generate', async (req, res) => {
       responseType: 'arraybuffer'
     });
 
+    // 🔹 3. Save MP3 and return link
     const filename = `${uuidv4()}.mp3`;
     const filepath = path.join(AUDIO_FOLDER, filename);
 
-    fs.writeFileSync(filepath, response.data);
+    fs.writeFileSync(filepath, elevenRes.data);
 
     const fileUrl = `${process.env.PUBLIC_URL}/audio/${filename}`;
     console.log('✅ Audio ready at:', fileUrl);
 
-    res.status(200).json({ url: fileUrl });
+    res.status(200).json({ url: fileUrl, text: gptReply });
   } catch (err) {
-    console.error('❌ Error generating audio:', err.message);
-    res.status(500).json({ error: 'Failed to generate audio' });
+    console.error('❌ Error:', err.message);
+    res.status(500).json({ error: 'Failed to generate GPT or audio reply' });
   }
 });
 
 module.exports = router;
+
