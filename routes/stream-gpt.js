@@ -4,7 +4,7 @@ const { OpenAI } = require('openai');
 const router = express.Router();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-router.get('/stream-gpt', async (req, res) => {
+router.get('/', async (req, res) => {
   const userPrompt = req.query.message || "Hello, how can I help you?";
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -51,4 +51,5 @@ router.get('/stream-gpt', async (req, res) => {
 });
 
 module.exports = router;
+
 
