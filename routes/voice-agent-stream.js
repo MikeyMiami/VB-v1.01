@@ -6,7 +6,8 @@ const { OpenAI } = require('openai');
 require('dotenv').config();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-router.post('/', async (req, res) => {
+// ✅ Add express.json() middleware directly to route to ensure body parsing
+router.post('/', express.json(), async (req, res) => {
   console.log('📥 POST to /voice-agent/stream');
   console.log('📦 Full request body:', req.body);
 
@@ -51,5 +52,6 @@ router.post('/', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
