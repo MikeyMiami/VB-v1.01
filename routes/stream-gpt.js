@@ -25,31 +25,30 @@ router.get('/stream-gpt', async (req, res) => {
     let buffer = '';
 
     for await (const chunk of stream) {
-      const content = chunk.choices?.[0]?.delta?.content || '';
-      if (content) {
-        buffer += content;
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (!delta) continue;
 
-        // Optionally flush every 3 words or on period
-        const shouldFlush = buffer.split(' ').length >= 3 || content.includes('.');
-        if (shouldFlush) {
-          res.write(`data: ${buffer.trim()}\n\n`);
-          buffer = '';
-        }
+      buffer += delta;
+
+      const shouldFlush = buffer.split(' ').length >= 3 || delta.includes('.');
+      if (shouldFlush) {
+        res.write(`data: ${buffer.trim()}\n\n`);
+        buffer = '';
       }
     }
 
-    // Final flush
-    if (buffer.trim() !== '') {
+    if (buffer.trim()) {
       res.write(`data: ${buffer.trim()}\n\n`);
     }
 
     res.write('event: done\ndata: [DONE]\n\n');
     res.end();
   } catch (err) {
-    console.error('❌ GPT Stream Error:', err);
+    console.error('❌ GPT Stream Error:', err.message);
     res.write(`event: error\ndata: ${JSON.stringify(err.message)}\n\n`);
     res.end();
   }
 });
 
 module.exports = router;
+
