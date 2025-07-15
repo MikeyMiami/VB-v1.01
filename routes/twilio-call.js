@@ -6,7 +6,8 @@ const {
   TWILIO_SID,
   TWILIO_AUTH,
   TWILIO_NUMBER,
-  PUBLIC_URL
+  PUBLIC_URL,
+  DEEPGRAM_SOCKET_URL
 } = process.env;
 
 const client = twilio(TWILIO_SID, TWILIO_AUTH);
@@ -32,14 +33,13 @@ router.post('/start', async (req, res) => {
   }
 });
 
-// GET /twilio-call/voice
+// POST /twilio-call/voice (Twilio webhook for call media)
 router.post('/voice', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
 
-  // Set up <Stream> to send audio to your Deepgram socket
   twiml.say('Connecting you to the AI agent now.');
   twiml.start().stream({
-    url: process.env.DEEPGRAM_SOCKET_URL
+    url: DEEPGRAM_SOCKET_URL
   });
 
   res.type('text/xml');
@@ -47,5 +47,6 @@ router.post('/voice', (req, res) => {
 });
 
 module.exports = router;
+
 
 
