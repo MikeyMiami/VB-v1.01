@@ -12,7 +12,6 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
 const AUDIO_FOLDER = path.join(__dirname, '..', 'public', 'audio');
 
-// Ensure audio folder exists
 if (!fs.existsSync(AUDIO_FOLDER)) {
   fs.mkdirSync(AUDIO_FOLDER, { recursive: true });
 }
@@ -20,13 +19,19 @@ if (!fs.existsSync(AUDIO_FOLDER)) {
 router.post('/stream', async (req, res) => {
   const { messages, message } = req.body;
 
-  const payloadMessages = messages || [
-    { role: 'system', content: 'You are a helpful assistant.' },
-    { role: 'user', content: message }
-  ];
+  console.log("📥 Incoming Request Body:", req.body);
 
-  if (!payloadMessages || !Array.isArray(payloadMessages)) {
-    return res.status(400).json({ error: 'Messages array or message string is required' });
+  let payloadMessages;
+
+  if (Array.isArray(messages)) {
+    payloadMessages = messages;
+  } else if (typeof message === 'string') {
+    payloadMessages = [
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: message }
+    ];
+  } else {
+    return res.status(400).json({ error: 'Missing valid "messages" array or "message" string in request body.' });
   }
 
   try {
@@ -68,10 +73,12 @@ router.post('/stream', async (req, res) => {
       audioUrls.push(fileUrl);
     }
 
+    console.log("✅ Generated audio chunks:", audioUrls);
     res.status(200).json({ audioChunks: audioUrls });
+
   } catch (err) {
-    console.error('❌ Error:', err.message);
-    res.status(500).json({ error: 'Failed to stream response' });
+    console.error('❌ Error generating audio stream:', err.message);
+    res.status(500).json({ error: 'Failed to stream and synthesize response' });
   }
 });
 
@@ -99,6 +106,7 @@ async function synthesizeSpeech(text) {
 }
 
 module.exports = router;
+
 
 
 
