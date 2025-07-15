@@ -8,6 +8,8 @@ const { createClient } = require('@deepgram/sdk');
 dotenv.config();
 app.use(express.json());
 const path = require('path');
+const expressWs = require('express-ws')(app);
+
 
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
@@ -28,6 +30,8 @@ app.use('/gpt', require('./routes/gpt'));
 app.use('/stream-gpt', require('./routes/stream-gpt'));
 app.use('/stream-playback', require('./routes/stream-playback'));
 app.use('/realtime', require('./routes/realtime'));
+app.use('/stream-tts', require('./routes/stream-tts'));
+
 
 
 
