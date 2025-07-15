@@ -1,14 +1,14 @@
 // routes/voice-agent-stream.js
-console.log("✅ voice-agent-stream route loaded");
 const express = require('express');
 const router = express.Router();
 const { OpenAI } = require('openai');
-
 require('dotenv').config();
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ✅ Add express.json() middleware directly to route to ensure body parsing
+// ✅ Ensure body is parsed before logs
 router.post('/', express.json(), async (req, res) => {
+  console.log("✅ voice-agent-stream route loaded");
   console.log('📥 POST to /voice-agent/stream');
   console.log('📦 Full request body:', req.body);
 
@@ -27,7 +27,7 @@ router.post('/', express.json(), async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
+  if (res.flushHeaders) res.flushHeaders();
 
   try {
     const completion = await openai.chat.completions.create({
@@ -37,7 +37,7 @@ router.post('/', express.json(), async (req, res) => {
     });
 
     for await (const chunk of completion) {
-      const content = chunk.choices?.[0]?.delta?.content;
+      const content = chunk?.choices?.[0]?.delta?.content;
       if (content) {
         res.write(`data: ${content}\n\n`);
       }
@@ -53,6 +53,7 @@ router.post('/', express.json(), async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
