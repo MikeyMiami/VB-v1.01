@@ -21,6 +21,8 @@ app.use('/elevenlabs', require('./routes/elevenlabs'));
 app.use('/outbound', require('./routes/outbound'));
 app.use('/twilio-call', require('./routes/twilio-call'));
 app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
+app.use('/playback', require('./routes/playback'));
+
 
 
 
