@@ -8,7 +8,6 @@ const { createClient } = require('@deepgram/sdk');
 dotenv.config();
 app.use(express.json());
 const path = require('path');
-app.use('/audio', express.static(path.join(__dirname, 'public', 'audio')));
 
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
