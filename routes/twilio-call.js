@@ -1,42 +1,51 @@
 const express = require('express');
 const router = express.Router();
-const VoiceResponse = require('twilio').twiml.VoiceResponse;
-const client = require('twilio')(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+const twilio = require('twilio');
 
-// Route for when the call connects — sends streaming instructions to Twilio
+const {
+  TWILIO_SID,
+  TWILIO_AUTH,
+  TWILIO_NUMBER,
+  PUBLIC_URL
+} = process.env;
+
+const client = twilio(TWILIO_SID, TWILIO_AUTH);
+
+// POST /twilio-call/start
+router.post('/start', async (req, res) => {
+  const { to } = req.body;
+
+  if (!to) return res.status(400).json({ error: 'Missing "to" phone number' });
+
+  try {
+    const call = await client.calls.create({
+      to,
+      from: TWILIO_NUMBER,
+      url: `${PUBLIC_URL}/twilio-call/voice`
+    });
+
+    console.log(`📞 Outbound call started: ${call.sid}`);
+    res.status(200).json({ message: 'Call started', sid: call.sid });
+  } catch (err) {
+    console.error('❌ Twilio error:', err.message);
+    res.status(500).json({ error: 'Failed to start call' });
+  }
+});
+
+// GET /twilio-call/voice
 router.post('/voice', (req, res) => {
-  const twiml = new VoiceResponse();
+  const twiml = new twilio.twiml.VoiceResponse();
 
-  // Stream the call audio to your Deepgram WebSocket
-  twiml.connect().stream({
-    url: process.env.DEEPGRAM_SOCKET_URL,
-    track: 'inbound_track'
+  // Set up <Stream> to send audio to your Deepgram socket
+  twiml.say('Connecting you to the AI agent now.');
+  twiml.start().stream({
+    url: process.env.DEEPGRAM_SOCKET_URL
   });
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
-// Route to start an outbound call to a number
-router.post('/start', async (req, res) => {
-  const { to } = req.body;
-
-  if (!to) return res.status(400).json({ error: 'Missing phone number' });
-
-  try {
-    const call = await client.calls.create({
-      to,
-      from: process.env.TWILIO_NUMBER,
-      url: `${process.env.PUBLIC_URL}/twilio-call/voice`, // When call connects, this runs
-      method: 'POST'
-    });
-
-    res.json({ success: true, sid: call.sid });
-  } catch (err) {
-    console.error('❌ Twilio call error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 module.exports = router;
+
 
