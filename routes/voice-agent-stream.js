@@ -1,58 +1,105 @@
-// routes/voice-agent-stream.js
 const express = require('express');
-const router = express.Router();
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 const { OpenAI } = require('openai');
-require('dotenv').config();
+
+const router = express.Router();
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
+const AUDIO_FOLDER = path.join(__dirname, '..', 'public', 'audio');
 
-// ✅ Ensure body is parsed before logs
-router.post('/', express.json(), async (req, res) => {
-  console.log("✅ voice-agent-stream route loaded");
-  console.log('📥 POST to /voice-agent/stream');
-  console.log('📦 Full request body:', req.body);
+// Ensure audio folder exists
+if (!fs.existsSync(AUDIO_FOLDER)) {
+  fs.mkdirSync(AUDIO_FOLDER, { recursive: true });
+}
 
-  const { messages } = req.body;
-  console.log('🛠️ Extracted messages:', messages);
+router.post('/stream', async (req, res) => {
+  const { messages, message } = req.body;
 
-  if (!messages || !Array.isArray(messages) || messages.length === 0) {
-    console.log('❌ Invalid or missing messages array.');
-    return res.status(400).json({
-      error: 'Message is required and must be a non-empty array.',
-      received: req.body
-    });
+  const payloadMessages = messages || [
+    { role: 'system', content: 'You are a helpful assistant.' },
+    { role: 'user', content: message }
+  ];
+
+  if (!payloadMessages || !Array.isArray(payloadMessages)) {
+    return res.status(400).json({ error: 'Messages array or message string is required' });
   }
 
-  // Set up Server-Sent Events headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  if (res.flushHeaders) res.flushHeaders();
-
   try {
-    const completion = await openai.chat.completions.create({
+    const gptStream = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
-      messages,
-      stream: true,
+      messages: payloadMessages,
+      stream: true
     });
 
-    for await (const chunk of completion) {
-      const content = chunk?.choices?.[0]?.delta?.content;
-      if (content) {
-        res.write(`data: ${content}\n\n`);
+    let buffer = '';
+    const audioUrls = [];
+
+    for await (const chunk of gptStream) {
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (!delta) continue;
+
+      buffer += delta;
+
+      const shouldSend = buffer.split(' ').length >= 4 || delta.includes('.') || delta.includes('!');
+      if (shouldSend) {
+        const audioBuffer = await synthesizeSpeech(buffer);
+        const filename = `${uuidv4()}.mp3`;
+        const filepath = path.join(AUDIO_FOLDER, filename);
+        fs.writeFileSync(filepath, audioBuffer);
+
+        const fileUrl = `${process.env.PUBLIC_URL}/audio/${filename}`;
+        audioUrls.push(fileUrl);
+        buffer = '';
       }
     }
 
-    res.write('data: [DONE]\n\n');
-    res.end();
+    if (buffer.trim()) {
+      const audioBuffer = await synthesizeSpeech(buffer);
+      const filename = `${uuidv4()}.mp3`;
+      const filepath = path.join(AUDIO_FOLDER, filename);
+      fs.writeFileSync(filepath, audioBuffer);
+
+      const fileUrl = `${process.env.PUBLIC_URL}/audio/${filename}`;
+      audioUrls.push(fileUrl);
+    }
+
+    res.status(200).json({ audioChunks: audioUrls });
   } catch (err) {
-    console.error('🔥 SSE stream error:', err);
-    res.write(`data: [ERROR] ${err.message}\n\n`);
-    res.end();
+    console.error('❌ Error:', err.message);
+    res.status(500).json({ error: 'Failed to stream response' });
   }
 });
 
+async function synthesizeSpeech(text) {
+  const response = await axios({
+    method: 'post',
+    url: `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+    headers: {
+      'xi-api-key': ELEVENLABS_API_KEY,
+      'Content-Type': 'application/json',
+      'Accept': 'audio/mpeg'
+    },
+    data: {
+      text: text,
+      model_id: 'eleven_monolingual_v1',
+      voice_settings: {
+        stability: 0.4,
+        similarity_boost: 0.75
+      }
+    },
+    responseType: 'arraybuffer'
+  });
+
+  return response.data;
+}
+
 module.exports = router;
+
 
 
 
