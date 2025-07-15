@@ -26,6 +26,8 @@ app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
 app.use('/playback', require('./routes/playback'));
 app.use('/gpt', require('./routes/gpt'));
 app.use('/stream-gpt', require('./routes/stream-gpt'));
+app.use('/stream-playback', require('./routes/stream-playback'));
+
 
 
 
