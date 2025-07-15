@@ -79,10 +79,11 @@ wss.on('connection', async (ws) => {
 
 // ✅ Start Server
 const PORT = process.env.PORT || 3000;
-app.post('*', (req, res) => {
-  console.log('⚠️ Unknown POST path hit:', req.path);
-  res.status(404).send('Not found');
+app.get('/debug-route', (req, res) => {
+  console.log('✅ Debug route was hit');
+  res.status(200).send('OK - Debug route is alive');
 });
+
 
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
