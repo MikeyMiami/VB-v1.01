@@ -10,10 +10,9 @@ const expressWs = require('express-ws')(app);
 
 dotenv.config();
 app.use(express.json());
-app.use(cors()); // ✅ Add CORS support for browser testing
+app.use(cors());
 // ✅ Handle CORS preflight for all routes
 app.options('*', cors());
-
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
@@ -24,6 +23,12 @@ app.get('/', (req, res) => {
 
 // ✅ Static Audio Files
 app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
+
+// ✅ Debug route
+app.get('/debug-route', (req, res) => {
+  console.log('✅ Debug route was hit');
+  res.status(200).send('OK - Debug route is alive');
+});
 
 // ✅ Routes
 app.use('/test-ai', require('./routes/test-ai'));
@@ -36,9 +41,15 @@ app.use('/gpt', require('./routes/gpt'));
 app.use('/stream-gpt', require('./routes/stream-gpt'));
 app.use('/stream-playback', require('./routes/stream-playback'));
 app.use('/realtime', require('./routes/realtime'));
-app.use('/stream-tts', require('./routes/stream-tts')); // ✅ WebSocket route for ElevenLabs stream
-app.use('/voice-agent', require('./routes/voice-agent')); // ✅ Real-time voice agent route
-app.use('/voice-agent/stream', require('./routes/voice-agent-stream')); // ✅ NEW: Streaming GPT response route
+app.use('/stream-tts', require('./routes/stream-tts'));
+app.use('/voice-agent', require('./routes/voice-agent'));
+app.use('/voice-agent/stream', require('./routes/voice-agent-stream'));
+
+// ✅ Catch all POST fallback (for debugging unknown routes)
+app.post('*', (req, res) => {
+  console.log('⚠️ Unknown POST path hit:', req.path);
+  res.status(404).send('Not found');
+});
 
 // ✅ WebSocket Server
 const server = http.createServer(app);
@@ -52,7 +63,7 @@ wss.on('connection', async (ws) => {
     smart_format: true,
     language: 'en',
     encoding: 'mulaw',
-    sample_rate: 8000
+    sample_rate: 8000,
   });
 
   dgConnection.on('transcriptReceived', (data) => {
@@ -82,12 +93,6 @@ wss.on('connection', async (ws) => {
 
 // ✅ Start Server
 const PORT = process.env.PORT || 3000;
-app.get('/debug-route', (req, res) => {
-  console.log('✅ Debug route was hit');
-  res.status(200).send('OK - Debug route is alive');
-});
-
-
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
