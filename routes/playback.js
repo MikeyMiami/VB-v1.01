@@ -33,7 +33,7 @@ router.post('/generate', async (req, res) => {
         'Content-Type': 'application/json'
       },
       data: {
-        model: 'gpt-4',
+        model: 'gpt-3.5-turbo',
         messages: [
           { role: 'system', content: 'You are a helpful AI voice assistant.' },
           { role: 'user', content: message }
