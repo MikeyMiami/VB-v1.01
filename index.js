@@ -36,6 +36,8 @@ app.use('/stream-gpt', require('./routes/stream-gpt'));
 app.use('/stream-playback', require('./routes/stream-playback'));
 app.use('/realtime', require('./routes/realtime'));
 app.use('/stream-tts', require('./routes/stream-tts'));
+app.use('/voice-agent', require('./routes/voice-agent'));
+
 
 // ✅ WebSocket Listener
 wss.on('connection', async (ws) => {
