@@ -11,12 +11,10 @@ router.post('/', async (req, res) => {
 
   console.log("🛠️ Incoming messages:", messages);
 
-  // Validate input
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'Message is required and must be a non-empty array.' });
   }
 
-  // Set headers for SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
