@@ -2,6 +2,7 @@ const express = require('express');
 const dotenv = require('dotenv');
 const path = require('path');
 const http = require('http');
+const cors = require('cors');
 const WebSocket = require('ws');
 const { createClient } = require('@deepgram/sdk');
 
@@ -11,6 +12,8 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
+// ✅ Middleware
+app.use(cors()); // <-- ✅ FIX: enable CORS properly here
 app.use(express.json());
 
 // ✅ Deepgram Client
@@ -37,7 +40,6 @@ app.use('/stream-playback', require('./routes/stream-playback'));
 app.use('/realtime', require('./routes/realtime'));
 app.use('/stream-tts', require('./routes/stream-tts'));
 app.use('/voice-agent', require('./routes/voice-agent'));
-
 
 // ✅ WebSocket Listener
 wss.on('connection', async (ws) => {
@@ -81,6 +83,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+
 
 
 
