@@ -35,6 +35,7 @@ app.use('/stream-playback', require('./routes/stream-playback'));
 app.use('/realtime', require('./routes/realtime'));
 app.use('/stream-tts', require('./routes/stream-tts')); // ✅ WebSocket route for ElevenLabs stream
 app.use('/voice-agent', require('./routes/voice-agent')); // ✅ Real-time voice agent route
+app.use('/voice-agent/stream', require('./routes/voice-agent-stream')); // ✅ NEW: Streaming GPT response route
 
 // ✅ WebSocket Server
 const server = http.createServer(app);
@@ -81,6 +82,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+
 
 
 
