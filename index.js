@@ -69,7 +69,7 @@ app.post('*', (req, res) => {
   res.status(404).send('Not found');
 });
 
-// ✅ WebSocket server (updated for full live flow)
+// ✅ WebSocket server (updated for linear16, 16000Hz, with KeepAlive)
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
@@ -77,14 +77,22 @@ wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
 
   const dgConnection = deepgram.listen.live({
-    model: 'nova-2',  // Updated to nova-2 for better accuracy
+    model: 'nova-2',
     smart_format: true,
     language: 'en',
-    encoding: 'mulaw',
-    sample_rate: 8000,
+    encoding: 'linear16',  // Changed to linear16 for browser compatibility
+    sample_rate: 16000,    // Changed to 16000Hz
     interim_results: true,
     utterance_end_ms: 1000,
   });
+
+  // Send KeepAlive every 5s to prevent timeout
+  const keepAliveInterval = setInterval(() => {
+    if (dgConnection.getReadyState() === 1) {
+      dgConnection.keepAlive();
+      console.log('Sent KeepAlive');
+    }
+  }, 5000);
 
   dgConnection.on('transcriptReceived', async (data) => {
     const transcript = data.channel?.alternatives[0]?.transcript;
@@ -108,6 +116,7 @@ wss.on('connection', async (ws) => {
 
   ws.on('close', () => {
     console.log('🔴 WebSocket closed');
+    clearInterval(keepAliveInterval);
     if (dgConnection) dgConnection.finish();
   });
 });
