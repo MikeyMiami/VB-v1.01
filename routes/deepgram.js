@@ -5,50 +5,88 @@ const axios = require('axios');
 const router = express.Router();
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
-// POST /deepgram/live
-router.post('/live', async (req, res) => {
-  const { transcript } = req.body;
+// POST /deepgram/transcribe - For testing single audio files (optional, but useful for debug)
+router.post('/transcribe', async (req, res) => {
+  const { audioUrl } = req.body;  // Expect a URL to an audio file for testing
+
+  if (!audioUrl) {
+    return res.status(400).json({ error: 'audioUrl is required' });
+  }
 
   try {
-    // 1. Send to GPT
-    const gptResponse = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: transcript }],
-      temperature: 0.7
-    }, {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      }
-    });
+    const { result, error } = await deepgram.listen.prerecorded.transcribeUrl(
+      { url: audioUrl },
+      { model: 'nova-2', smart_format: true, language: 'en' }
+    );
 
-    const reply = gptResponse.data.choices[0].message.content;
-    console.log('🤖 GPT Reply:', reply);
+    if (error) throw error;
 
-    // 2. Send to ElevenLabs
-    const audioResponse = await axios({
-      method: 'POST',
-      url: `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}`,
-      headers: {
-        'xi-api-key': process.env.ELEVENLABS_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      responseType: 'arraybuffer',
-      data: {
-        text: reply,
-        model_id: 'eleven_monolingual_v1',
-        voice_settings: { stability: 0.7, similarity_boost: 0.7 }
-      }
-    });
+    const transcript = result.results.channels[0].alternatives[0].transcript;
+    console.log('📝 Transcript:', transcript);
 
-    // Send back audio buffer (or save, or stream to Twilio depending on architecture)
-    res.set('Content-Type', 'audio/mpeg');
-    res.send(audioResponse.data);
+    // Pipe to GPT/TTS (call your working endpoint internally)
+    const aiResponse = await processTranscript(transcript);
 
+    res.status(200).json({ transcript, aiResponse });
   } catch (err) {
-    console.error('❌ Error in AI pipeline:', err.message);
-    res.status(500).json({ error: 'Failed to process AI response' });
+    console.error('❌ Deepgram transcription error:', err.message);
+    res.status(500).json({ error: 'Failed to transcribe audio' });
   }
 });
+
+// WebSocket for live streaming (mount as app.ws('/deepgram/live') in index.js if needed)
+router.ws('/live', (ws) => {
+  console.log('🟢 Deepgram WebSocket connected for live transcription');
+
+  const liveTranscription = deepgram.listen.live({
+    model: 'nova-2',
+    smart_format: true,
+    language: 'en',
+    interim_results: true,
+    utterance_end_ms: 1000,  // Detect end of speech
+  });
+
+  liveTranscription.on('open', () => console.log('Deepgram live ready'));
+  liveTranscription.on('error', (err) => console.error('Deepgram live error:', err));
+
+  liveTranscription.on('transcriptReceived', async (data) => {
+    const transcript = data.channel?.alternatives[0]?.transcript;
+    if (transcript && transcript.length > 0) {
+      console.log('📝 Live Transcript:', transcript);
+      ws.send(JSON.stringify({ transcript }));
+
+      // Pipe to GPT/TTS in real-time
+      const aiResponse = await processTranscript(transcript);
+      ws.send(JSON.stringify({ aiResponse }));
+    }
+  });
+
+  ws.on('message', (audioChunk) => {
+    // AudioChunk should be binary audio data (e.g., from client mic)
+    liveTranscription.send(audioChunk);
+  });
+
+  ws.on('close', () => {
+    console.log('🔴 Deepgram WebSocket closed');
+    liveTranscription.finish();
+  });
+});
+
+// Helper: Process transcript with GPT/TTS (reuses your fixed /voice-agent/stream)
+async function processTranscript(transcript) {
+  try {
+    const response = await axios.post(`${process.env.PUBLIC_URL}/voice-agent/stream`, {
+      message: transcript
+    }, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    return response.data;  // { audioChunks: [...] }
+  } catch (err) {
+    console.error('❌ Error processing transcript:', err.message);
+    return { error: 'Failed to generate AI response' };
+  }
+}
 
 module.exports = router;
 
