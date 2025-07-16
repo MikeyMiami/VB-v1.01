@@ -42,7 +42,7 @@ app.use('/twilio-call', require('./routes/twilio-call'));
 app.use('/playback', require('./routes/playback'));
 app.use('/realtime', require('./routes/realtime'));
 
-// Helper: Process transcript with GPT/TTS (reuses your fixed /voice-agent/stream)
+// Helper: Process transcript with GPT/TTS
 async function processTranscript(transcript) {
   try {
     const response = await axios.post(`${process.env.PUBLIC_URL}/voice-agent/stream`, {
@@ -50,51 +50,12 @@ async function processTranscript(transcript) {
     }, {
       headers: { 'Content-Type': 'application/json' }
     });
-
     return response.data;  // { audioChunks: [...] }
   } catch (err) {
     console.error('❌ Error processing transcript:', err.message);
     return { error: 'Failed to generate AI response' };
   }
 }
-
-// ✅ WebSocket for Deepgram live transcription
-app.ws('/deepgram/live', (ws, req) => {
-  console.log('🟢 Deepgram WebSocket connected for live transcription');
-
-  const liveTranscription = deepgram.listen.live({
-    model: 'nova-2',
-    smart_format: true,
-    language: 'en',
-    interim_results: true,
-    utterance_end_ms: 1000,  // Detect end of speech
-  });
-
-  liveTranscription.on('open', () => console.log('Deepgram live ready'));
-  liveTranscription.on('error', (err) => console.error('Deepgram live error:', err));
-
-  liveTranscription.on('transcriptReceived', async (data) => {
-    const transcript = data.channel?.alternatives[0]?.transcript;
-    if (transcript && transcript.length > 0) {
-      console.log('📝 Live Transcript:', transcript);
-      ws.send(JSON.stringify({ transcript }));
-
-      // Pipe to GPT/TTS in real-time
-      const aiResponse = await processTranscript(transcript);
-      ws.send(JSON.stringify({ aiResponse }));
-    }
-  });
-
-  ws.on('message', (audioChunk) => {
-    // AudioChunk should be binary audio data (e.g., from client mic)
-    liveTranscription.send(audioChunk);
-  });
-
-  ws.on('close', () => {
-    console.log('🔴 Deepgram WebSocket closed');
-    liveTranscription.finish();
-  });
-});
 
 // ✅ Debug route
 app.get('/debug-route', (req, res) => {
@@ -108,7 +69,7 @@ app.post('*', (req, res) => {
   res.status(404).send('Not found');
 });
 
-// ✅ WebSocket server
+// ✅ WebSocket server (updated for full live flow)
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
@@ -116,17 +77,24 @@ wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
 
   const dgConnection = deepgram.listen.live({
-    model: 'nova',
+    model: 'nova-2',  // Updated to nova-2 for better accuracy
     smart_format: true,
     language: 'en',
     encoding: 'mulaw',
     sample_rate: 8000,
+    interim_results: true,
+    utterance_end_ms: 1000,
   });
 
-  dgConnection.on('transcriptReceived', (data) => {
+  dgConnection.on('transcriptReceived', async (data) => {
     const transcript = data.channel?.alternatives[0]?.transcript;
     if (transcript?.length > 0) {
       console.log('📝 Transcript:', transcript);
+      ws.send(JSON.stringify({ transcript }));
+
+      // Pipe to GPT/TTS
+      const aiResponse = await processTranscript(transcript);
+      ws.send(JSON.stringify({ aiResponse }));
     }
   });
 
