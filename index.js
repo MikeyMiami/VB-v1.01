@@ -7,6 +7,7 @@ const path = require('path');
 const cors = require('cors');
 const { createClient } = require('@deepgram/sdk');
 const expressWs = require('express-ws')(app);
+const axios = require('axios');
 
 dotenv.config();
 
@@ -40,6 +41,60 @@ app.use('/outbound', require('./routes/outbound'));
 app.use('/twilio-call', require('./routes/twilio-call'));
 app.use('/playback', require('./routes/playback'));
 app.use('/realtime', require('./routes/realtime'));
+
+// Helper: Process transcript with GPT/TTS (reuses your fixed /voice-agent/stream)
+async function processTranscript(transcript) {
+  try {
+    const response = await axios.post(`${process.env.PUBLIC_URL}/voice-agent/stream`, {
+      message: transcript
+    }, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    return response.data;  // { audioChunks: [...] }
+  } catch (err) {
+    console.error('❌ Error processing transcript:', err.message);
+    return { error: 'Failed to generate AI response' };
+  }
+}
+
+// ✅ WebSocket for Deepgram live transcription
+app.ws('/deepgram/live', (ws, req) => {
+  console.log('🟢 Deepgram WebSocket connected for live transcription');
+
+  const liveTranscription = deepgram.listen.live({
+    model: 'nova-2',
+    smart_format: true,
+    language: 'en',
+    interim_results: true,
+    utterance_end_ms: 1000,  // Detect end of speech
+  });
+
+  liveTranscription.on('open', () => console.log('Deepgram live ready'));
+  liveTranscription.on('error', (err) => console.error('Deepgram live error:', err));
+
+  liveTranscription.on('transcriptReceived', async (data) => {
+    const transcript = data.channel?.alternatives[0]?.transcript;
+    if (transcript && transcript.length > 0) {
+      console.log('📝 Live Transcript:', transcript);
+      ws.send(JSON.stringify({ transcript }));
+
+      // Pipe to GPT/TTS in real-time
+      const aiResponse = await processTranscript(transcript);
+      ws.send(JSON.stringify({ aiResponse }));
+    }
+  });
+
+  ws.on('message', (audioChunk) => {
+    // AudioChunk should be binary audio data (e.g., from client mic)
+    liveTranscription.send(audioChunk);
+  });
+
+  ws.on('close', () => {
+    console.log('🔴 Deepgram WebSocket closed');
+    liveTranscription.finish();
+  });
+});
 
 // ✅ Debug route
 app.get('/debug-route', (req, res) => {
