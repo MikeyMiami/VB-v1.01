@@ -69,7 +69,7 @@ app.post('*', (req, res) => {
   res.status(404).send('Not found');
 });
 
-// ✅ WebSocket server (updated with logging for received messages)
+// ✅ WebSocket server
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
@@ -82,6 +82,7 @@ wss.on('connection', async (ws) => {
     language: 'en',
     encoding: 'linear16',
     sample_rate: 16000,
+    channels: 1,  // Added for mono browser audio
     interim_results: true,
     utterance_end_ms: 1000,
   });
@@ -95,6 +96,7 @@ wss.on('connection', async (ws) => {
   }, 5000);
 
   dgConnection.on('transcriptReceived', async (data) => {
+    console.log('Transcript data received: ', JSON.stringify(data)); // Log full data for debug
     const transcript = data.channel?.alternatives[0]?.transcript;
     if (transcript?.length > 0) {
       console.log('📝 Transcript:', transcript);
@@ -115,7 +117,7 @@ wss.on('connection', async (ws) => {
   dgConnection.on('close', () => console.log('Deepgram connection closed'));
 
   ws.on('message', (msg) => {
-    console.log('Received audio chunk of length:', msg.length); // Log to confirm data is arriving
+    console.log('Received audio chunk of length:', msg.length);
     if (dgConnection && dgConnection.getReadyState() === 1) {
       dgConnection.send(msg);
     } else {
