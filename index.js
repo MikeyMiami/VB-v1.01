@@ -69,7 +69,7 @@ app.post('*', (req, res) => {
   res.status(404).send('Not found');
 });
 
-// ✅ WebSocket server (updated for linear16, 16000Hz, with KeepAlive)
+// ✅ WebSocket server (updated with logging for received messages)
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
@@ -80,13 +80,13 @@ wss.on('connection', async (ws) => {
     model: 'nova-2',
     smart_format: true,
     language: 'en',
-    encoding: 'linear16',  // Changed to linear16 for browser compatibility
-    sample_rate: 16000,    // Changed to 16000Hz
+    encoding: 'linear16',
+    sample_rate: 16000,
     interim_results: true,
     utterance_end_ms: 1000,
   });
 
-  // Send KeepAlive every 5s to prevent timeout
+  // Send KeepAlive every 5s
   const keepAliveInterval = setInterval(() => {
     if (dgConnection.getReadyState() === 1) {
       dgConnection.keepAlive();
@@ -100,9 +100,10 @@ wss.on('connection', async (ws) => {
       console.log('📝 Transcript:', transcript);
       ws.send(JSON.stringify({ transcript }));
 
-      // Pipe to GPT/TTS
       const aiResponse = await processTranscript(transcript);
       ws.send(JSON.stringify({ aiResponse }));
+    } else {
+      console.log('No transcript in data');
     }
   });
 
@@ -110,8 +111,16 @@ wss.on('connection', async (ws) => {
     console.error('Deepgram error:', err);
   });
 
+  dgConnection.on('open', () => console.log('Deepgram connection open'));
+  dgConnection.on('close', () => console.log('Deepgram connection closed'));
+
   ws.on('message', (msg) => {
-    if (dgConnection) dgConnection.send(msg);
+    console.log('Received audio chunk of length:', msg.length); // Log to confirm data is arriving
+    if (dgConnection && dgConnection.getReadyState() === 1) {
+      dgConnection.send(msg);
+    } else {
+      console.log('Deepgram not ready for data');
+    }
   });
 
   ws.on('close', () => {
