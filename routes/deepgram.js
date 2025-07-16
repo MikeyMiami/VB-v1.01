@@ -34,44 +34,6 @@ router.post('/transcribe', async (req, res) => {
   }
 });
 
-// WebSocket for live streaming (mount as app.ws('/deepgram/live') in index.js if needed)
-router.ws('/live', (ws) => {
-  console.log('🟢 Deepgram WebSocket connected for live transcription');
-
-  const liveTranscription = deepgram.listen.live({
-    model: 'nova-2',
-    smart_format: true,
-    language: 'en',
-    interim_results: true,
-    utterance_end_ms: 1000,  // Detect end of speech
-  });
-
-  liveTranscription.on('open', () => console.log('Deepgram live ready'));
-  liveTranscription.on('error', (err) => console.error('Deepgram live error:', err));
-
-  liveTranscription.on('transcriptReceived', async (data) => {
-    const transcript = data.channel?.alternatives[0]?.transcript;
-    if (transcript && transcript.length > 0) {
-      console.log('📝 Live Transcript:', transcript);
-      ws.send(JSON.stringify({ transcript }));
-
-      // Pipe to GPT/TTS in real-time
-      const aiResponse = await processTranscript(transcript);
-      ws.send(JSON.stringify({ aiResponse }));
-    }
-  });
-
-  ws.on('message', (audioChunk) => {
-    // AudioChunk should be binary audio data (e.g., from client mic)
-    liveTranscription.send(audioChunk);
-  });
-
-  ws.on('close', () => {
-    console.log('🔴 Deepgram WebSocket closed');
-    liveTranscription.finish();
-  });
-});
-
 // Helper: Process transcript with GPT/TTS (reuses your fixed /voice-agent/stream)
 async function processTranscript(transcript) {
   try {
