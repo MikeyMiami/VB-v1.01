@@ -16,7 +16,7 @@ if (!fs.existsSync(AUDIO_FOLDER)) {
   fs.mkdirSync(AUDIO_FOLDER, { recursive: true });
 }
 
-router.post('/stream', async (req, res) => {
+router.post('/', async (req, res) => {
   const { messages, message } = req.body;
 
   console.log("📥 Incoming Request Body:", req.body);
