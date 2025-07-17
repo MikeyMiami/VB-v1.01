@@ -18,7 +18,7 @@ dotenv.config();
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ✅ Middleware
+// ✅ Middleware -
 app.use(express.json()); // required to parse JSON body
 app.use(cors());
 app.options('*', cors()); // preflight
