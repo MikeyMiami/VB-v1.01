@@ -24,7 +24,7 @@ router.post('/transcribe', async (req, res) => {
     const transcript = result.results.channels[0].alternatives[0].transcript;
     console.log('📝 Transcript:', transcript);
 
-    // Pipe to GPT/TTS (call your working endpoint internally)
+    // Pipe to GPT/TTS (call your working endpoint internally) -
     const aiResponse = await processTranscript(transcript);
 
     res.status(200).json({ transcript, aiResponse });
