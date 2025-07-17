@@ -11,6 +11,7 @@ const expressWs = require('express-ws')(app);
 const axios = require('axios');
 const fluentFfmpeg = require('fluent-ffmpeg');
 const { OpenAI } = require('openai');
+const stream = require('stream'); // Added for PassThrough
 
 fluentFfmpeg.setFfmpegPath(require('ffmpeg-static'));
 
@@ -18,7 +19,7 @@ dotenv.config();
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ✅ Middleware -
+// ✅ Middleware
 app.use(express.json()); // required to parse JSON body
 app.use(cors());
 app.options('*', cors()); // preflight
@@ -29,7 +30,7 @@ app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
 // ✅ Deepgram setup
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
-// ✅ Health checks
+// ✅ Health check
 app.get('/', (req, res) => {
   res.send('✅ Voicebot backend is live and running.');
 });
@@ -230,9 +231,11 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
 
 function convertToMulaw(inputBuffer) {
   return new Promise((resolve, reject) => {
+    const inputStream = new stream.PassThrough();
+    inputStream.end(inputBuffer);
     const outputBuffers = [];
     fluentFfmpeg()
-      .input(inputBuffer)
+      .input(inputStream)
       .inputFormat('mp3')
       .audioCodec('pcm_mulaw')
       .audioChannels(1)
@@ -247,9 +250,11 @@ function convertToMulaw(inputBuffer) {
 
 function convertToPcm(inputBuffer) {
   return new Promise((resolve, reject) => {
+    const inputStream = new stream.PassThrough();
+    inputStream.end(inputBuffer);
     const outputBuffers = [];
     fluentFfmpeg()
-      .input(inputBuffer)
+      .input(inputStream)
       .inputFormat('webm')
       .audioCodec('pcm_s16le')
       .audioChannels(1)
