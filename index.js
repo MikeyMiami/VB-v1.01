@@ -1,3 +1,4 @@
+console.log('DEPLOY VERIFICATION: index.js updated on July 17, 2025 - Commit Hash: [your-latest-commit-hash]');
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
