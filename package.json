@@ -1,3 +1,4 @@
+// package.json
 {
   "name": "voicebot-backend",
   "version": "1.0.0",
@@ -16,7 +17,9 @@
     "openai": "^4.30.0",
     "twilio": "^4.10.0",
     "uuid": "^9.0.1",
-    "ws": "^8.13.0"
+    "ws": "^8.13.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "ffmpeg-static": "^5.2.0"
   }
 }
 
