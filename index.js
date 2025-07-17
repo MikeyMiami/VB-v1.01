@@ -11,7 +11,7 @@ const expressWs = require('express-ws')(app);
 const axios = require('axios');
 const fluentFfmpeg = require('fluent-ffmpeg');
 const { OpenAI } = require('openai');
-const stream = require('stream'); // Added for PassThrough
+const stream = require('stream');
 
 fluentFfmpeg.setFfmpegPath(require('ffmpeg-static'));
 
@@ -100,7 +100,7 @@ wss.on('connection', async (ws) => {
     }
   });
 
-  ws.on('message', async (msg) => {
+  ws.on('message', (msg) => {
     try {
       const data = JSON.parse(msg.toString()); // Twilio sends JSON strings
       if (data.event === 'connected') {
@@ -129,20 +129,15 @@ wss.on('connection', async (ws) => {
         return;
       }
     } catch (e) {
-      // Not JSON: Assume browser raw binary (WEBM/OPUS)
+      // Not JSON: Assume browser raw PCM (Int16Array buffer)
       if (!isTwilio) {
         dgConfig.encoding = 'linear16';
         dgConfig.sample_rate = 16000;
         dgConfig.channels = 1;
-        console.log('Received browser audio chunk (WEBM):', msg.length);
-        try {
-          const pcmBuffer = await convertToPcm(msg); // Convert WEBM/OPUS to linear16 PCM
-          if (dgConnection.getReadyState() === 1) {
-            dgConnection.send(pcmBuffer);
-            console.log('Sent converted PCM to Deepgram:', pcmBuffer.length);
-          }
-        } catch (convErr) {
-          console.error('Audio conversion error:', convErr.message);
+        const pcmBuffer = Buffer.from(msg); // Already PCM from client
+        console.log('Received browser PCM audio chunk:', pcmBuffer.length);
+        if (dgConnection.getReadyState() === 1) {
+          dgConnection.send(pcmBuffer);
         }
       }
     }
@@ -170,7 +165,6 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
 
       const shouldFlush = buffer.split(' ').length >= 4 || delta.includes('.');
       if (shouldFlush) {
-        // Generate TTS chunk (ElevenLabs streaming for low latency)
         const ttsResponse = await axios({
           method: 'post',
           url: `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
@@ -181,7 +175,6 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
         let audioChunk = ttsResponse.data; // MP3 buffer
 
         if (isTwilio) {
-          // Convert MP3 to MULAW 8000Hz mono
           audioChunk = await convertToMulaw(audioChunk);
           const base64Audio = audioChunk.toString('base64');
           ws.send(JSON.stringify({
@@ -241,25 +234,6 @@ function convertToMulaw(inputBuffer) {
       .audioChannels(1)
       .audioFrequency(8000)
       .outputFormat('mulaw')
-      .on('error', reject)
-      .on('end', () => resolve(Buffer.concat(outputBuffers)))
-      .pipe()
-      .on('data', (chunk) => outputBuffers.push(chunk));
-  });
-}
-
-function convertToPcm(inputBuffer) {
-  return new Promise((resolve, reject) => {
-    const inputStream = new stream.PassThrough();
-    inputStream.end(inputBuffer);
-    const outputBuffers = [];
-    fluentFfmpeg()
-      .input(inputStream)
-      .inputFormat('webm')
-      .audioCodec('pcm_s16le')
-      .audioChannels(1)
-      .audioFrequency(16000)
-      .outputFormat('s16le')
       .on('error', reject)
       .on('end', () => resolve(Buffer.concat(outputBuffers)))
       .pipe()
