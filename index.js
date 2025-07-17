@@ -28,7 +28,7 @@ app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
 // ✅ Deepgram setup
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
-// ✅ Health check
+// ✅ Health checks
 app.get('/', (req, res) => {
   res.send('✅ Voicebot backend is live and running.');
 });
