@@ -1,3 +1,4 @@
+// index.js
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -8,8 +9,14 @@ const cors = require('cors');
 const { createClient } = require('@deepgram/sdk');
 const expressWs = require('express-ws')(app);
 const axios = require('axios');
+const fluentFfmpeg = require('fluent-ffmpeg');
+const { OpenAI } = require('openai');
+
+fluentFfmpeg.setFfmpegPath(require('ffmpeg-static'));
 
 dotenv.config();
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ✅ Middleware
 app.use(express.json()); // required to parse JSON body
@@ -42,21 +49,6 @@ app.use('/twilio-call', require('./routes/twilio-call'));
 app.use('/playback', require('./routes/playback'));
 app.use('/realtime', require('./routes/realtime'));
 
-// Helper: Process transcript with GPT/TTS
-async function processTranscript(transcript) {
-  try {
-    const response = await axios.post(`${process.env.PUBLIC_URL}/voice-agent/stream`, {
-      message: transcript
-    }, {
-      headers: { 'Content-Type': 'application/json' }
-    });
-    return response.data;  // { audioChunks: [...] }
-  } catch (err) {
-    console.error('❌ Error processing transcript:', err.message);
-    return { error: 'Failed to generate AI response' };
-  }
-}
-
 // ✅ Debug route
 app.get('/debug-route', (req, res) => {
   console.log('✅ Debug route was hit');
@@ -75,17 +67,10 @@ const wss = new WebSocket.Server({ server, path: '/ws' });
 
 wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
-
-  const dgConnection = deepgram.listen.live({
-    model: 'nova-2',
-    smart_format: true,
-    language: 'en',
-    encoding: 'linear16',
-    sample_rate: 16000,
-    channels: 1,  // Added for mono browser audio
-    interim_results: true,
-    utterance_end_ms: 1000,
-  });
+  let isTwilio = false;
+  let streamSid = null;
+  let dgConfig = { model: 'nova-2', smart_format: true, language: 'en', interim_results: true, utterance_end_ms: 1000 };
+  const dgConnection = deepgram.listen.live(dgConfig); // Initial config; updated dynamically
 
   // Send KeepAlive every 5s
   const keepAliveInterval = setInterval(() => {
@@ -95,33 +80,64 @@ wss.on('connection', async (ws) => {
     }
   }, 5000);
 
+  dgConnection.on('open', () => console.log('Deepgram connection open'));
+  dgConnection.on('close', () => console.log('Deepgram connection closed'));
+  dgConnection.on('error', (err) => console.error('Deepgram error:', err));
+
   dgConnection.on('transcriptReceived', async (data) => {
     console.log('Transcript data received: ', JSON.stringify(data)); // Log full data for debug
     const transcript = data.channel?.alternatives[0]?.transcript;
     if (transcript?.length > 0) {
       console.log('📝 Transcript:', transcript);
-      ws.send(JSON.stringify({ transcript }));
+      if (!isTwilio) {
+        ws.send(JSON.stringify({ transcript }));
+      }
 
-      const aiResponse = await processTranscript(transcript);
-      ws.send(JSON.stringify({ aiResponse }));
+      await streamAiResponse(transcript, ws, isTwilio, streamSid);
     } else {
       console.log('No transcript in data');
     }
   });
 
-  dgConnection.on('error', (err) => {
-    console.error('Deepgram error:', err);
-  });
-
-  dgConnection.on('open', () => console.log('Deepgram connection open'));
-  dgConnection.on('close', () => console.log('Deepgram connection closed'));
-
   ws.on('message', (msg) => {
-    console.log('Received audio chunk of length:', msg.length);
-    if (dgConnection && dgConnection.getReadyState() === 1) {
-      dgConnection.send(msg);
-    } else {
-      console.log('Deepgram not ready for data');
+    try {
+      const data = JSON.parse(msg.toString()); // Twilio sends JSON strings
+      if (data.event === 'connected') {
+        isTwilio = true;
+        console.log('Twilio connected');
+        return;
+      } else if (data.event === 'start') {
+        streamSid = data.streamSid;
+        console.log('Twilio stream started, SID:', streamSid);
+        // Update Deepgram config for Twilio
+        dgConfig.encoding = 'mulaw';
+        dgConfig.sample_rate = 8000;
+        dgConfig.channels = 1;
+        return;
+      } else if (data.event === 'media') {
+        const audioBase64 = data.media.payload;
+        const audioBuffer = Buffer.from(audioBase64, 'base64');
+        console.log('Received Twilio audio chunk:', audioBuffer.length);
+        if (dgConnection.getReadyState() === 1) {
+          dgConnection.send(audioBuffer); // MULAW direct to Deepgram
+        }
+        return;
+      } else if (data.event === 'stop') {
+        console.log('Twilio stream stopped');
+        ws.close();
+        return;
+      }
+    } catch (e) {
+      // Not JSON: Assume browser raw binary (PCM linear16 16kHz)
+      if (!isTwilio) {
+        dgConfig.encoding = 'linear16';
+        dgConfig.sample_rate = 16000;
+        dgConfig.channels = 1;
+        console.log('Received browser audio chunk:', msg.length);
+        if (dgConnection.getReadyState() === 1) {
+          dgConnection.send(msg);
+        }
+      }
     }
   });
 
@@ -131,6 +147,97 @@ wss.on('connection', async (ws) => {
     if (dgConnection) dgConnection.finish();
   });
 });
+
+async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
+  try {
+    const gptStream = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [{ role: 'user', content: transcript }],
+      stream: true
+    });
+
+    let buffer = '';
+    for await (const chunk of gptStream) {
+      const delta = chunk.choices[0]?.delta?.content || '';
+      buffer += delta;
+
+      const shouldFlush = buffer.split(' ').length >= 4 || delta.includes('.');
+      if (shouldFlush) {
+        // Generate TTS chunk (ElevenLabs streaming for low latency)
+        const ttsResponse = await axios({
+          method: 'post',
+          url: `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
+          headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+          data: { text: buffer, model_id: 'eleven_monolingual_v1', voice_settings: { stability: 0.4, similarity_boost: 0.75 } },
+          responseType: 'arraybuffer'
+        });
+        let audioChunk = ttsResponse.data; // MP3 buffer
+
+        if (isTwilio) {
+          // Convert MP3 to MULAW 8000Hz mono
+          audioChunk = await convertToMulaw(audioChunk);
+          const base64Audio = audioChunk.toString('base64');
+          ws.send(JSON.stringify({
+            event: 'media',
+            streamSid: streamSid,
+            media: { payload: base64Audio }
+          }));
+        } else {
+          ws.send(audioChunk); // Raw MP3 for browser
+        }
+        buffer = '';
+      }
+    }
+
+    // Final flush
+    if (buffer.trim()) {
+      const ttsResponse = await axios({
+        method: 'post',
+        url: `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
+        headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+        data: { text: buffer, model_id: 'eleven_monolingual_v1', voice_settings: { stability: 0.4, similarity_boost: 0.75 } },
+        responseType: 'arraybuffer'
+      });
+      let audioChunk = ttsResponse.data;
+
+      if (isTwilio) {
+        audioChunk = await convertToMulaw(audioChunk);
+        const base64Audio = audioChunk.toString('base64');
+        ws.send(JSON.stringify({
+          event: 'media',
+          streamSid: streamSid,
+          media: { payload: base64Audio }
+        }));
+      } else {
+        ws.send(audioChunk);
+      }
+    }
+
+    console.log('✅ AI response streamed');
+    if (!isTwilio) {
+      ws.send(JSON.stringify({ aiResponse: 'complete' }));
+    }
+  } catch (err) {
+    console.error('❌ Error streaming AI:', err.message);
+  }
+}
+
+function convertToMulaw(inputBuffer) {
+  return new Promise((resolve, reject) => {
+    const outputBuffers = [];
+    fluentFfmpeg()
+      .input(inputBuffer)
+      .inputFormat('mp3')
+      .audioCodec('pcm_mulaw')
+      .audioChannels(1)
+      .audioFrequency(8000)
+      .outputFormat('mulaw')
+      .on('error', reject)
+      .on('end', () => resolve(Buffer.concat(outputBuffers)))
+      .pipe()
+      .on('data', (chunk) => outputBuffers.push(chunk));
+  });
+}
 
 // ✅ Server start
 const PORT = process.env.PORT || 3000;
