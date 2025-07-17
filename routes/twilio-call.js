@@ -1,4 +1,3 @@
-// twilio-call.js -
 const express = require('express');
 const router = express.Router();
 const twilio = require('twilio');
@@ -47,9 +46,10 @@ router.post('/start', async (req, res) => {
   }
 });
 
-// 📞 Initial call response (stream only)
+// 📞 Initial call response (greeting + stream)
 router.post('/voice', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
+  twiml.say({ voice: 'Polly.Joanna' }, 'Hello, this is the AI agent. How can I help you today?');
   twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL });
   res.type('text/xml');
   res.send(twiml.toString());
