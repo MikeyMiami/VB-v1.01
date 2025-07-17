@@ -1,4 +1,3 @@
-// index.js
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -99,7 +98,7 @@ wss.on('connection', async (ws) => {
     }
   });
 
-  ws.on('message', (msg) => {
+  ws.on('message', async (msg) => {
     try {
       const data = JSON.parse(msg.toString()); // Twilio sends JSON strings
       if (data.event === 'connected') {
@@ -128,14 +127,20 @@ wss.on('connection', async (ws) => {
         return;
       }
     } catch (e) {
-      // Not JSON: Assume browser raw binary (PCM linear16 16kHz)
+      // Not JSON: Assume browser raw binary (WEBM/OPUS)
       if (!isTwilio) {
         dgConfig.encoding = 'linear16';
         dgConfig.sample_rate = 16000;
         dgConfig.channels = 1;
-        console.log('Received browser audio chunk:', msg.length);
-        if (dgConnection.getReadyState() === 1) {
-          dgConnection.send(msg);
+        console.log('Received browser audio chunk (WEBM):', msg.length);
+        try {
+          const pcmBuffer = await convertToPcm(msg); // Convert WEBM/OPUS to linear16 PCM
+          if (dgConnection.getReadyState() === 1) {
+            dgConnection.send(pcmBuffer);
+            console.log('Sent converted PCM to Deepgram:', pcmBuffer.length);
+          }
+        } catch (convErr) {
+          console.error('Audio conversion error:', convErr.message);
         }
       }
     }
@@ -232,6 +237,23 @@ function convertToMulaw(inputBuffer) {
       .audioChannels(1)
       .audioFrequency(8000)
       .outputFormat('mulaw')
+      .on('error', reject)
+      .on('end', () => resolve(Buffer.concat(outputBuffers)))
+      .pipe()
+      .on('data', (chunk) => outputBuffers.push(chunk));
+  });
+}
+
+function convertToPcm(inputBuffer) {
+  return new Promise((resolve, reject) => {
+    const outputBuffers = [];
+    fluentFfmpeg()
+      .input(inputBuffer)
+      .inputFormat('webm')
+      .audioCodec('pcm_s16le')
+      .audioChannels(1)
+      .audioFrequency(16000)
+      .outputFormat('s16le')
       .on('error', reject)
       .on('end', () => resolve(Buffer.concat(outputBuffers)))
       .pipe()
