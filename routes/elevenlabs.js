@@ -2,7 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const router = express.Router();
 
-// Pulling keys and voice ID from your .env
+// Pulling keys and voice ID from your .env -
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'uYXf8XasLslADfZ2MB4u'; // default fallback
 
