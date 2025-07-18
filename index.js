@@ -73,6 +73,15 @@ wss.on('connection', async (ws) => {
   let dgConfig = { model: 'nova-2', smart_format: true, language: 'en', interim_results: true, utterance_end_ms: 1000 };
   const dgConnection = deepgram.listen.live(dgConfig); // Initial config; updated dynamically
 
+  let twilioBuffer = Buffer.alloc(0); // Buffer for Twilio chunks
+  const bufferInterval = setInterval(() => {
+    if (twilioBuffer.length >= 8000 && dgConnection.getReadyState() === 1) { // ~1s MULAW
+      dgConnection.send(twilioBuffer.slice(0, 8000));
+      console.log('Sent buffered MULAW to Deepgram:', 8000);
+      twilioBuffer = twilioBuffer.slice(8000);
+    }
+  }, 1000); // Flush every 1s
+
   // Send KeepAlive every 5s
   const keepAliveInterval = setInterval(() => {
     if (dgConnection.getReadyState() === 1) {
@@ -119,8 +128,17 @@ wss.on('connection', async (ws) => {
         const audioBase64 = data.media.payload;
         const audioBuffer = Buffer.from(audioBase64, 'base64');
         console.log('Received Twilio audio chunk:', audioBuffer.length);
-        if (dgConnection.getReadyState() === 1) {
-          dgConnection.send(audioBuffer); // MULAW direct to Deepgram
+        // Simple VAD: Calculate RMS energy
+        let rms = 0;
+        for (let i = 0; i < audioBuffer.length; i++) {
+          rms += audioBuffer[i] * audioBuffer[i];
+        }
+        rms = Math.sqrt(rms / audioBuffer.length);
+        if (rms > 10) { // Threshold for speech (adjust based on tests; 10-20 for MULAW)
+          twilioBuffer = Buffer.concat([twilioBuffer, audioBuffer]);
+          console.log('Speech detected - Buffered chunk');
+        } else {
+          console.log('Silence detected - Skipped chunk');
         }
         return;
       } else if (data.event === 'stop') {
@@ -146,6 +164,7 @@ wss.on('connection', async (ws) => {
   ws.on('close', () => {
     console.log('🔴 WebSocket closed');
     clearInterval(keepAliveInterval);
+    clearInterval(bufferInterval); // Clean up buffer timer
     if (dgConnection) dgConnection.finish();
   });
 });
