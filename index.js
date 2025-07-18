@@ -1,4 +1,4 @@
-// index.js (Updated with fixes: inbound audio filtering, improved VAD with μ-law to PCM conversion, increased RMS threshold, buffer size logging, and audio chunk saving for debugging)
+// index.js (Updated with fixes: inbound audio filtering, improved VAD with μ-law to PCM conversion, increased RMS threshold, buffer size logging, audio chunk saving for debugging, and correct public/audio path handling)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -19,6 +19,12 @@ fluentFfmpeg.setFfmpegPath(require('ffmpeg-static'));
 dotenv.config();
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Ensure audio directory exists
+const audioDir = path.join(__dirname, 'public', 'audio');
+if (!fs.existsSync(audioDir)) {
+  fs.mkdirSync(audioDir, { recursive: true });
+}
 
 // ✅ Middleware
 app.use(express.json()); // required to parse JSON body
@@ -102,8 +108,9 @@ function saveChunkAsWav(mulawBuffer, filename) {
   for (let i = 0; i < pcm.length; i++) {
     wavBuffer.writeInt16LE(pcm[i], 44 + i * 2);
   }
-  fs.writeFileSync(filename, wavBuffer);
-  console.log(`Saved audio chunk for debugging: ${filename}`);
+  const fullPath = path.join(audioDir, filename);
+  fs.writeFileSync(fullPath, wavBuffer);
+  console.log(`Saved audio chunk for debugging: ${fullPath}`);
 }
 
 wss.on('connection', async (ws) => {
@@ -174,7 +181,7 @@ wss.on('connection', async (ws) => {
         console.log('Received Twilio inbound audio chunk:', audioBuffer.length);
 
         // Save chunk for debugging
-        const chunkFilename = `./audio/inbound_chunk_${Date.now()}.wav`;
+        const chunkFilename = `inbound_chunk_${Date.now()}.wav`;
         saveChunkAsWav(audioBuffer, chunkFilename);
 
         // Convert to PCM and calculate RMS for VAD
