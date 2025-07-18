@@ -63,7 +63,7 @@ app.post('*', (req, res) => {
 
 // ✅ WebSocket server
 const server = http.createServer(app);
-const wss = WebSocket.Server({ server, path: '/ws' });
+const wss = new WebSocket.Server({ server, path: '/ws' }); // Added 'new' here
 
 wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
