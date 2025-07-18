@@ -1,4 +1,3 @@
-console.log('DEPLOY VERIFICATION: index.js updated on July 17, 2025 - Commit Hash: [your-latest-commit-hash]');
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -64,7 +63,7 @@ app.post('*', (req, res) => {
 
 // ✅ WebSocket server
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server, path: '/ws' });
+const wss = WebSocket.Server({ server, path: '/ws' });
 
 wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
@@ -134,7 +133,8 @@ wss.on('connection', async (ws) => {
           rms += audioBuffer[i] * audioBuffer[i];
         }
         rms = Math.sqrt(rms / audioBuffer.length);
-        if (rms > 10) { // Threshold for speech (adjust based on tests; 10-20 for MULAW)
+        console.log('RMS energy: ', rms); // Log to debug volume
+        if (rms > 5) { // Lowered threshold for sensitivity
           twilioBuffer = Buffer.concat([twilioBuffer, audioBuffer]);
           console.log('Speech detected - Buffered chunk');
         } else {
