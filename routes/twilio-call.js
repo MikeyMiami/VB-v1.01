@@ -46,11 +46,12 @@ router.post('/start', async (req, res) => {
   }
 });
 
-// 📞 Initial call response (greeting + stream)
+// 📞 Initial call response (greeting + stream + pause)
 router.post('/voice', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say('Hello, this is the AI agent. Please speak your question.');
-  twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL, track: 'both_tracks' });
+  twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL });
+  twiml.pause({ length: 60 }); // Keeps call open for 60 seconds; adjust as needed
   res.type('text/xml');
   res.send(twiml.toString());
 });
