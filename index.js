@@ -1,4 +1,4 @@
-// index.js (Updated with fixes: inbound audio filtering, improved VAD with μ-law to PCM conversion, increased RMS threshold, buffer size logging, audio chunk saving for debugging, and correct public/audio path handling)
+// index.js (Updated: Added saving of full buffered audio before flushing to Deepgram for easier debugging with 1s segments)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -113,6 +113,31 @@ function saveChunkAsWav(mulawBuffer, filename) {
   console.log(`Saved audio chunk for debugging: ${fullPath}`);
 }
 
+// New function to save the full buffered audio as WAV before flushing
+function saveBufferedAudioAsWav(bufferedMulaw, filename) {
+  const pcm = ulawToPcm(bufferedMulaw);
+  const wavBuffer = Buffer.alloc(44 + pcm.length * 2);
+  wavBuffer.write('RIFF', 0, 4);
+  wavBuffer.writeUInt32LE(36 + pcm.length * 2, 4);
+  wavBuffer.write('WAVE', 8, 4);
+  wavBuffer.write('fmt ', 12, 4);
+  wavBuffer.writeUInt32LE(16, 16);
+  wavBuffer.writeUInt16LE(1, 20); // PCM format
+  wavBuffer.writeUInt16LE(1, 22); // Mono
+  wavBuffer.writeUInt32LE(8000, 24); // Sample rate
+  wavBuffer.writeUInt32LE(16000, 28); // Byte rate
+  wavBuffer.writeUInt16LE(2, 32); // Block align
+  wavBuffer.writeUInt16LE(16, 34); // Bits per sample
+  wavBuffer.write('data', 36, 4);
+  wavBuffer.writeUInt32LE(pcm.length * 2, 40);
+  for (let i = 0; i < pcm.length; i++) {
+    wavBuffer.writeInt16LE(pcm[i], 44 + i * 2);
+  }
+  const fullPath = path.join(audioDir, filename);
+  fs.writeFileSync(fullPath, wavBuffer);
+  console.log(`Saved buffered audio (longer segment) for debugging: ${fullPath}`);
+}
+
 wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
   let isTwilio = false;
@@ -123,6 +148,10 @@ wss.on('connection', async (ws) => {
   let twilioBuffer = Buffer.alloc(0); // Buffer for Twilio chunks
   const bufferInterval = setInterval(() => {
     if (twilioBuffer.length >= 8000 && dgConnection.getReadyState() === 1) { // ~1s MULAW
+      // Save the full buffer as a longer WAV before flushing
+      const bufferFilename = `buffered_audio_${Date.now()}.wav`;
+      saveBufferedAudioAsWav(twilioBuffer.slice(0, 8000), bufferFilename);
+
       dgConnection.send(twilioBuffer.slice(0, 8000));
       console.log('Sent buffered MULAW to Deepgram:', 8000);
       twilioBuffer = twilioBuffer.slice(8000);
@@ -180,7 +209,7 @@ wss.on('connection', async (ws) => {
         const audioBuffer = Buffer.from(audioBase64, 'base64');
         console.log('Received Twilio inbound audio chunk:', audioBuffer.length);
 
-        // Save chunk for debugging
+        // Save individual chunk for debugging (optional; you can comment this out if not needed)
         const chunkFilename = `inbound_chunk_${Date.now()}.wav`;
         saveChunkAsWav(audioBuffer, chunkFilename);
 
