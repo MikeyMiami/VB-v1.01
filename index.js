@@ -1,3 +1,4 @@
+// index.js (Updated with fixes: inbound audio filtering, improved VAD with μ-law to PCM conversion, increased RMS threshold, buffer size logging, and audio chunk saving for debugging)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -11,6 +12,7 @@ const axios = require('axios');
 const fluentFfmpeg = require('fluent-ffmpeg');
 const { OpenAI } = require('openai');
 const stream = require('stream');
+const fs = require('fs'); // Added for saving audio chunks
 
 fluentFfmpeg.setFfmpegPath(require('ffmpeg-static'));
 
@@ -64,6 +66,45 @@ app.post('*', (req, res) => {
 // ✅ WebSocket server
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' }); // Added 'new' here
+
+// μ-law to PCM conversion function (pure JS)
+function ulawToPcm(ulawBuffer) {
+  const pcm = new Int16Array(ulawBuffer.length);
+  for (let i = 0; i < ulawBuffer.length; i++) {
+    let sample = ~(ulawBuffer[i] & 0xFF);
+    const sign = (sample & 0x80) ? -1 : 1;
+    sample &= 0x7F;
+    const exponent = (sample >> 4) & 0x07;
+    const mantissa = sample & 0x0F;
+    let value = (mantissa << (exponent + 3)) + (0x21 << exponent) - 0x21;
+    pcm[i] = sign * value * 4; // Scale to approximate 16-bit range
+  }
+  return pcm;
+}
+
+// Function to save audio chunk as WAV for debugging
+function saveChunkAsWav(mulawBuffer, filename) {
+  const pcm = ulawToPcm(mulawBuffer);
+  const wavBuffer = Buffer.alloc(44 + pcm.length * 2);
+  wavBuffer.write('RIFF', 0, 4);
+  wavBuffer.writeUInt32LE(36 + pcm.length * 2, 4);
+  wavBuffer.write('WAVE', 8, 4);
+  wavBuffer.write('fmt ', 12, 4);
+  wavBuffer.writeUInt32LE(16, 16);
+  wavBuffer.writeUInt16LE(1, 20); // PCM format
+  wavBuffer.writeUInt16LE(1, 22); // Mono
+  wavBuffer.writeUInt32LE(8000, 24); // Sample rate
+  wavBuffer.writeUInt32LE(16000, 28); // Byte rate
+  wavBuffer.writeUInt16LE(2, 32); // Block align
+  wavBuffer.writeUInt16LE(16, 34); // Bits per sample
+  wavBuffer.write('data', 36, 4);
+  wavBuffer.writeUInt32LE(pcm.length * 2, 40);
+  for (let i = 0; i < pcm.length; i++) {
+    wavBuffer.writeInt16LE(pcm[i], 44 + i * 2);
+  }
+  fs.writeFileSync(filename, wavBuffer);
+  console.log(`Saved audio chunk for debugging: ${filename}`);
+}
 
 wss.on('connection', async (ws) => {
   console.log('🟢 WebSocket connected');
@@ -124,19 +165,29 @@ wss.on('connection', async (ws) => {
         dgConfig.channels = 1;
         return;
       } else if (data.event === 'media') {
+        if (data.media.track !== 'inbound') {
+          console.log('Skipping non-inbound audio chunk (likely agent output)');
+          return;
+        }
         const audioBase64 = data.media.payload;
         const audioBuffer = Buffer.from(audioBase64, 'base64');
-        console.log('Received Twilio audio chunk:', audioBuffer.length);
-        // Simple VAD: Calculate RMS energy
+        console.log('Received Twilio inbound audio chunk:', audioBuffer.length);
+
+        // Save chunk for debugging
+        const chunkFilename = `./audio/inbound_chunk_${Date.now()}.wav`;
+        saveChunkAsWav(audioBuffer, chunkFilename);
+
+        // Convert to PCM and calculate RMS for VAD
+        const pcm = ulawToPcm(audioBuffer);
         let rms = 0;
-        for (let i = 0; i < audioBuffer.length; i++) {
-          rms += audioBuffer[i] * audioBuffer[i];
+        for (let i = 0; i < pcm.length; i++) {
+          rms += pcm[i] * pcm[i];
         }
-        rms = Math.sqrt(rms / audioBuffer.length);
-        console.log('RMS energy: ', rms); // Log to debug volume
-        if (rms > 5) { // Lowered threshold for sensitivity
+        rms = Math.sqrt(rms / pcm.length);
+        console.log('RMS energy (PCM): ', rms); // Log to debug volume
+        if (rms > 1000) { // Increased threshold for better sensitivity on PCM
           twilioBuffer = Buffer.concat([twilioBuffer, audioBuffer]);
-          console.log('Speech detected - Buffered chunk');
+          console.log('Speech detected - Buffered chunk, buffer size:', twilioBuffer.length);
         } else {
           console.log('Silence detected - Skipped chunk');
         }
