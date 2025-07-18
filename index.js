@@ -1,4 +1,4 @@
-// index.js (Updated: Added saving of full buffered audio before flushing to Deepgram for easier debugging with 1s segments)
+// index.js (Updated: Lowered flush threshold, added silence-based flushing for better response triggering, enhanced logging)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -113,7 +113,7 @@ function saveChunkAsWav(mulawBuffer, filename) {
   console.log(`Saved audio chunk for debugging: ${fullPath}`);
 }
 
-// New function to save the full buffered audio as WAV before flushing
+// Function to save the full buffered audio as WAV before flushing
 function saveBufferedAudioAsWav(bufferedMulaw, filename) {
   const pcm = ulawToPcm(bufferedMulaw);
   const wavBuffer = Buffer.alloc(44 + pcm.length * 2);
@@ -146,17 +146,35 @@ wss.on('connection', async (ws) => {
   const dgConnection = deepgram.listen.live(dgConfig); // Initial config; updated dynamically
 
   let twilioBuffer = Buffer.alloc(0); // Buffer for Twilio chunks
+  let lastSpeechTime = Date.now(); // Track time of last speech chunk for silence detection
+
   const bufferInterval = setInterval(() => {
-    if (twilioBuffer.length >= 8000 && dgConnection.getReadyState() === 1) { // ~1s MULAW
+    const now = Date.now();
+    const flushSize = 3200; // Lowered to ~0.4s for faster responses
+    const minFlushSize = 1600; // Minimum for silence flush to avoid tiny sends
+
+    // Size-based flush (for ongoing speech)
+    if (twilioBuffer.length >= flushSize && dgConnection.getReadyState() === 1) {
       // Save the full buffer as a longer WAV before flushing
       const bufferFilename = `buffered_audio_${Date.now()}.wav`;
-      saveBufferedAudioAsWav(twilioBuffer.slice(0, 8000), bufferFilename);
+      saveBufferedAudioAsWav(twilioBuffer.slice(0, flushSize), bufferFilename);
 
-      dgConnection.send(twilioBuffer.slice(0, 8000));
-      console.log('Sent buffered MULAW to Deepgram:', 8000);
-      twilioBuffer = twilioBuffer.slice(8000);
+      dgConnection.send(twilioBuffer.slice(0, flushSize));
+      console.log(`Sent buffered MULAW to Deepgram: ${flushSize}`);
+      twilioBuffer = twilioBuffer.slice(flushSize);
     }
-  }, 1000); // Flush every 1s
+
+    // Silence-based flush (if no new speech for 1s and buffer has enough)
+    if (now - lastSpeechTime > 1000 && twilioBuffer.length >= minFlushSize && dgConnection.getReadyState() === 1) {
+      // Save the full buffer as a longer WAV before flushing
+      const bufferFilename = `buffered_audio_${Date.now()}.wav`;
+      saveBufferedAudioAsWav(twilioBuffer, bufferFilename);
+
+      dgConnection.send(twilioBuffer);
+      console.log(`Flushed buffer on silence to Deepgram: ${twilioBuffer.length} bytes`);
+      twilioBuffer = Buffer.alloc(0); // Clear buffer after silence flush
+    }
+  }, 500); // Check more frequently (every 0.5s) for better responsiveness
 
   // Send KeepAlive every 5s
   const keepAliveInterval = setInterval(() => {
@@ -181,7 +199,7 @@ wss.on('connection', async (ws) => {
 
       await streamAiResponse(transcript, ws, isTwilio, streamSid);
     } else {
-      console.log('No transcript in data');
+      console.log('No transcript in data (possible short/noisy audio)');
     }
   });
 
@@ -224,6 +242,7 @@ wss.on('connection', async (ws) => {
         if (rms > 1000) { // Increased threshold for better sensitivity on PCM
           twilioBuffer = Buffer.concat([twilioBuffer, audioBuffer]);
           console.log('Speech detected - Buffered chunk, buffer size:', twilioBuffer.length);
+          lastSpeechTime = Date.now(); // Update last speech time
         } else {
           console.log('Silence detected - Skipped chunk');
         }
