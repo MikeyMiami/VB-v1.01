@@ -50,7 +50,7 @@ router.post('/start', async (req, res) => {
 router.post('/voice', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say('Hello, this is the AI agent. Please speak your question.');
-  twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL });
+  twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL, track: 'both_tracks' });
   res.type('text/xml');
   res.send(twiml.toString());
 });
