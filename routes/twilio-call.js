@@ -49,8 +49,7 @@ router.post('/start', async (req, res) => {
 // 📞 Initial call response (greeting + stream)
 router.post('/voice', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say('Hello, this is the AI agent. Please speak your question after the tone.');
-  twiml.play('https://api.twilio.com/cowbell.mp3'); // Short tone to signal start speaking
+  twiml.say('Hello, this is the AI agent. Please speak your question.');
   twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL });
   res.type('text/xml');
   res.send(twiml.toString());
