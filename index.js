@@ -1,4 +1,4 @@
-// index.js (Updated: Check ws.readyState in send loop, break on close, log partial sends; increase logging)
+// index.js (Updated: Removed 'track' from media JSON to fix Twilio 31951 error, added send validation/logging)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -337,9 +337,13 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
     let audioBuffer = Buffer.concat(chunks);
     console.log('TTS audio generated, length:', audioBuffer.length);
     
-    // Optional: Prepend short silence to buffer playback
+    // Save TTS as WAV for manual debug (mu-law to PCM)
+    const ttsFilename = `tts_response_${Date.now()}.wav`;
+    saveChunkAsWav(audioBuffer, ttsFilename); // Reuse save function (it's mu-law input)
+    
+    // Optional: Append short silence to end for flush
     const silence = generateSilenceBuffer(500); // 0.5s silence
-    audioBuffer = Buffer.concat([silence, audioBuffer]);
+    audioBuffer = Buffer.concat([audioBuffer, silence]);
     
     // Send audio back to Twilio via WebSocket (split into 160-byte chunks, paced at 20ms)
     if (isTwilio && ws.readyState === WebSocket.OPEN) {
@@ -360,8 +364,7 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
           event: 'media',
           streamSid: streamSid,
           media: {
-            track: 'outbound', // Required for Twilio to play on caller side
-            payload: chunk.toString('base64')
+            payload: chunk.toString('base64') // No 'track' - Twilio infers outbound
           },
           sequenceNumber: sequenceNumber.toString(),
           timestamp: timestamp.toString()
