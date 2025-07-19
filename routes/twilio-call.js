@@ -1,4 +1,4 @@
-// twilio-call.js (Unchanged, as no issues were identified in this file)
+// twilio-call.js (Updated: Increased <Pause> to 120s for longer call duration)
 const express = require('express');
 const router = express.Router();
 const twilio = require('twilio');
@@ -52,7 +52,7 @@ router.post('/voice', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say('Hello, this is the AI agent. Please speak your question.');
   twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL });
-  twiml.pause({ length: 60 }); // Keeps call open for 60 seconds; adjust as needed
+  twiml.pause({ length: 120 }); // Keeps call open for 120 seconds; increased for longer responses
   res.type('text/xml');
   res.send(twiml.toString());
 });
