@@ -1,4 +1,4 @@
-// index.js (Updated: Added normalizeMulaw for amplitude boosting, applied in 'media' event)
+// index.js (Updated: Adjusted based on working example for efficient transcription - changed model to 'nova-2-phonecall', corrected event names, removed per-chunk silence appending, kept normalization and periodic silence/keepalive, ensured non-empty transcript check/trim)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -6,7 +6,7 @@ const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
 const cors = require('cors');
-const { createClient } = require('@deepgram/sdk');
+const { createClient, LiveTranscriptionEvents } = require('@deepgram/sdk'); // Added LiveTranscriptionEvents import
 const expressWs = require('express-ws')(app);
 const axios = require('axios');
 const fluentFfmpeg = require('fluent-ffmpeg');
@@ -168,7 +168,7 @@ wss.on('connection', async (ws) => {
   let isTwilio = false;
   let streamSid = null;
   let dgConnection = null;
-  let dgConfig = { model: 'nova-2', smart_format: true, language: 'en', interim_results: true, utterance_end_ms: 1000, endpointing: 10 };
+  let dgConfig = { model: 'nova-2-phonecall', smart_format: true, language: 'en', interim_results: true, utterance_end_ms: 1000, endpointing: 10 }; // Changed model to 'nova-2-phonecall' for phone audio
 
   let lastChunkTime = Date.now();
 
@@ -202,14 +202,14 @@ wss.on('connection', async (ws) => {
         dgConfig.sample_rate = 8000;
         dgConfig.channels = 1;
         dgConnection = deepgram.listen.live(dgConfig);
-        dgConnection.on('open', () => console.log('Deepgram connection open'));
-        dgConnection.on('close', () => console.log('Deepgram connection closed'));
-        dgConnection.on('error', (err) => console.error('Deepgram error:', err));
-        dgConnection.on('utteranceEnd', (data) => console.log('UtteranceEnd received: ', JSON.stringify(data)));
-        dgConnection.on('metadata', (data) => console.log('Metadata received: ', JSON.stringify(data)));
-        dgConnection.on('transcriptReceived', async (data) => {
+        dgConnection.on(LiveTranscriptionEvents.Open, () => console.log('Deepgram connection open')); // Corrected event names
+        dgConnection.on(LiveTranscriptionEvents.Close, () => console.log('Deepgram connection closed'));
+        dgConnection.on(LiveTranscriptionEvents.Error, (err) => console.error('Deepgram error:', err));
+        dgConnection.on(LiveTranscriptionEvents.UtteranceEnd, (data) => console.log('UtteranceEnd received: ', JSON.stringify(data)));
+        dgConnection.on(LiveTranscriptionEvents.Metadata, (data) => console.log('Metadata received: ', JSON.stringify(data)));
+        dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => { // Changed to Transcript event
           console.log('Transcript data received: ', JSON.stringify(data));
-          const transcript = data.channel?.alternatives[0]?.transcript;
+          let transcript = data.channel?.alternatives[0]?.transcript?.trim(); // Added trim
           if (transcript?.length > 0) {
             console.log('📝 Transcript:', transcript);
             if (!isTwilio) {
@@ -234,15 +234,11 @@ wss.on('connection', async (ws) => {
         const chunkFilename = `inbound_chunk_${Date.now()}.wav`;
         saveChunkAsWav(audioBuffer, chunkFilename);
 
-        // Normalize and send immediately to Deepgram
+        // Normalize and send immediately to Deepgram (removed per-chunk silence append for efficiency, relying on periodic interval)
         const normalizedBuffer = normalizeMulaw(audioBuffer);
         if (dgConnection && dgConnection.getReadyState() === 1) {
           dgConnection.send(normalizedBuffer);
           console.log('Sent normalized chunk to Deepgram, length:', normalizedBuffer.length);
-          // Append silence
-          const silenceBuffer = generateSilenceBuffer();
-          dgConnection.send(silenceBuffer);
-          console.log('Appended 0.5s silence after normalized chunk');
         }
         lastChunkTime = Date.now();
         return;
@@ -259,7 +255,25 @@ wss.on('connection', async (ws) => {
           dgConfig.sample_rate = 16000;
           dgConfig.channels = 1;
           dgConnection = deepgram.listen.live(dgConfig);
-          // Add event listeners (omitted for brevity, same as above)
+          // Add event listeners (updated to correct names)
+          dgConnection.on(LiveTranscriptionEvents.Open, () => console.log('Deepgram connection open'));
+          dgConnection.on(LiveTranscriptionEvents.Close, () => console.log('Deepgram connection closed'));
+          dgConnection.on(LiveTranscriptionEvents.Error, (err) => console.error('Deepgram error:', err));
+          dgConnection.on(LiveTranscriptionEvents.UtteranceEnd, (data) => console.log('UtteranceEnd received: ', JSON.stringify(data)));
+          dgConnection.on(LiveTranscriptionEvents.Metadata, (data) => console.log('Metadata received: ', JSON.stringify(data)));
+          dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
+            console.log('Transcript data received: ', JSON.stringify(data));
+            let transcript = data.channel?.alternatives[0]?.transcript?.trim();
+            if (transcript?.length > 0) {
+              console.log('📝 Transcript:', transcript);
+              if (!isTwilio) {
+                ws.send(JSON.stringify({ transcript }));
+              }
+              await streamAiResponse(transcript, ws, isTwilio, streamSid);
+            } else {
+              console.log('No transcript in data');
+            }
+          });
         }
         const pcmBuffer = Buffer.from(msg);
         console.log('Received browser PCM audio chunk:', pcmBuffer.length);
