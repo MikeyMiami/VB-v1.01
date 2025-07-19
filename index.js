@@ -298,7 +298,68 @@ wss.on('connection', async (ws) => {
 });
 
 async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
-  // (unchanged)
+  try {
+    console.log('Generating AI response for transcript:', transcript);
+    
+    // Generate response with OpenAI (customize prompt/model if needed)
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini', // Efficient and cheap; use 'gpt-4o' for better quality
+      messages: [
+        { role: 'system', content: 'You are a helpful AI assistant. Respond concisely and naturally.' },
+        { role: 'user', content: transcript }
+      ],
+      max_tokens: 150,
+      temperature: 0.7
+    });
+    const responseText = completion.choices[0].message.content.trim();
+    console.log('AI response text:', responseText);
+    
+    // Synthesize speech with Deepgram TTS (mu-law for Twilio compatibility)
+    const ttsResponse = await deepgram.speak.request(
+      { text: responseText },
+      { model: 'aura-helios-en', encoding: 'mulaw', sample_rate: 8000, container: 'none' }
+    );
+    const audioStream = await ttsResponse.getStream();
+    if (!audioStream) throw new Error('TTS stream failed');
+    
+    // Convert stream to Buffer (no file headers)
+    const chunks = [];
+    for await (const chunk of audioStream) {
+      chunks.push(chunk);
+    }
+    const audioBuffer = Buffer.concat(chunks);
+    console.log('TTS audio generated, length:', audioBuffer.length);
+    
+    // Send audio back to Twilio via WebSocket (split into 160-byte chunks, paced at 20ms)
+    if (isTwilio && ws.readyState === WebSocket.OPEN) {
+      let offset = 0;
+      let sequenceNumber = 1;
+      let timestamp = 0;
+      const chunkSize = 160; // ~20ms of mu-law audio
+      while (offset < audioBuffer.length) {
+        const end = Math.min(offset + chunkSize, audioBuffer.length);
+        const chunk = audioBuffer.slice(offset, end);
+        ws.send(JSON.stringify({
+          event: 'media',
+          streamSid: streamSid,
+          media: {
+            payload: chunk.toString('base64')
+          },
+          sequenceNumber: sequenceNumber.toString(),
+          timestamp: timestamp.toString()
+        }));
+        offset = end;
+        sequenceNumber++;
+        timestamp += 20; // Increment by ms per chunk
+        await new Promise(resolve => setTimeout(resolve, 20)); // Pace to match real-time playback
+      }
+      console.log('Audio sent to Twilio successfully');
+    } else {
+      console.warn('Not Twilio or WebSocket closed; skipping audio send');
+    }
+  } catch (error) {
+    console.error('Error in streamAiResponse:', error.message);
+  }
 }
 
 function convertToMulaw(inputBuffer) {
