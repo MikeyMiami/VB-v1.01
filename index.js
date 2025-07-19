@@ -1,4 +1,4 @@
-// index.js (Updated: Filter to only final speech transcripts for responses, add responding flag to prevent overlaps, add "track": "outbound" to media JSON, more logging)
+// index.js (Updated: Check ws.readyState in send loop, break on close, log partial sends; increase logging)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -334,8 +334,12 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
     for await (const chunk of audioStream) {
       chunks.push(chunk);
     }
-    const audioBuffer = Buffer.concat(chunks);
+    let audioBuffer = Buffer.concat(chunks);
     console.log('TTS audio generated, length:', audioBuffer.length);
+    
+    // Optional: Prepend short silence to buffer playback
+    const silence = generateSilenceBuffer(500); // 0.5s silence
+    audioBuffer = Buffer.concat([silence, audioBuffer]);
     
     // Send audio back to Twilio via WebSocket (split into 160-byte chunks, paced at 20ms)
     if (isTwilio && ws.readyState === WebSocket.OPEN) {
@@ -344,7 +348,12 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
       let sequenceNumber = 1;
       let timestamp = 0;
       const chunkSize = 160; // ~20ms of mu-law audio
+      let sentBytes = 0;
       while (offset < audioBuffer.length) {
+        if (ws.readyState !== WebSocket.OPEN) {
+          console.warn('WebSocket closed mid-send; aborting remaining audio');
+          break;
+        }
         const end = Math.min(offset + chunkSize, audioBuffer.length);
         const chunk = audioBuffer.slice(offset, end);
         ws.send(JSON.stringify({
@@ -358,12 +367,17 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
           timestamp: timestamp.toString()
         }));
         console.log(`Sent audio chunk ${sequenceNumber}, length: ${chunk.length}`);
+        sentBytes += chunk.length;
         offset = end;
         sequenceNumber++;
         timestamp += 20; // Increment by ms per chunk
         await new Promise(resolve => setTimeout(resolve, 20)); // Pace to match real-time playback
       }
-      console.log('Audio sent to Twilio successfully');
+      if (sentBytes === audioBuffer.length) {
+        console.log('Audio sent to Twilio successfully');
+      } else {
+        console.warn(`Audio send incomplete (sent ${sentBytes}/${audioBuffer.length} bytes)`);
+      }
     } else {
       console.warn('Not Twilio or WebSocket closed; skipping audio send');
     }
