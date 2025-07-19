@@ -1,4 +1,4 @@
-// index.js (Updated: Adjusted based on working example for efficient transcription - changed model to 'nova-2-phonecall', corrected event names, removed per-chunk silence appending, kept normalization and periodic silence/keepalive, ensured non-empty transcript check/trim)
+// index.js (Updated: Filter to only final speech transcripts for responses, add responding flag to prevent overlaps, add "track": "outbound" to media JSON, more logging)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -6,14 +6,13 @@ const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
 const cors = require('cors');
-const { createClient, LiveTranscriptionEvents } = require('@deepgram/sdk'); // Added LiveTranscriptionEvents import
+const { createClient, LiveTranscriptionEvents } = require('@deepgram/sdk');
 const expressWs = require('express-ws')(app);
 const axios = require('axios');
 const fluentFfmpeg = require('fluent-ffmpeg');
 const { OpenAI } = require('openai');
 const stream = require('stream');
 const fs = require('fs');
-const { promisify } = require('util');
 
 fluentFfmpeg.setFfmpegPath(require('ffmpeg-static'));
 
@@ -170,6 +169,7 @@ wss.on('connection', async (ws) => {
   let streamSid = null;
   let dgConnection = null;
   let dgConfig = { model: 'nova-2-phonecall', smart_format: true, language: 'en', interim_results: true, utterance_end_ms: 1000, endpointing: 10 }; // Changed model to 'nova-2-phonecall' for phone audio
+  let responding = false; // Flag to prevent overlapping responses
 
   let lastChunkTime = Date.now();
 
@@ -211,14 +211,17 @@ wss.on('connection', async (ws) => {
         dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => { // Changed to Transcript event
           console.log('Transcript data received: ', JSON.stringify(data));
           let transcript = data.channel?.alternatives[0]?.transcript?.trim(); // Added trim
-          if (transcript?.length > 0) {
-            console.log('📝 Transcript:', transcript);
+          if (transcript?.length > 0 && data.is_final && data.speech_final && !responding) { // Only process final, complete utterances
+            console.log('📝 Transcript (final):', transcript);
+            responding = true; // Lock to prevent overlaps
             if (!isTwilio) {
               ws.send(JSON.stringify({ transcript }));
             }
             await streamAiResponse(transcript, ws, isTwilio, streamSid);
+            responding = false; // Unlock after done
           } else {
-            console.log('No transcript in data');
+            if (transcript?.length > 0) console.log('📝 Interim Transcript (skipped):', transcript);
+            else console.log('No transcript in data');
           }
         });
         return;
@@ -265,14 +268,17 @@ wss.on('connection', async (ws) => {
           dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
             console.log('Transcript data received: ', JSON.stringify(data));
             let transcript = data.channel?.alternatives[0]?.transcript?.trim();
-            if (transcript?.length > 0) {
-              console.log('📝 Transcript:', transcript);
+            if (transcript?.length > 0 && data.is_final && data.speech_final && !responding) {
+              console.log('📝 Transcript (final):', transcript);
+              responding = true;
               if (!isTwilio) {
                 ws.send(JSON.stringify({ transcript }));
               }
               await streamAiResponse(transcript, ws, isTwilio, streamSid);
+              responding = false;
             } else {
-              console.log('No transcript in data');
+              if (transcript?.length > 0) console.log('📝 Interim Transcript (skipped):', transcript);
+              else console.log('No transcript in data');
             }
           });
         }
@@ -315,57 +321,43 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
     const responseText = completion.choices[0].message.content.trim();
     console.log('AI response text:', responseText);
     
-    // Synthesize speech with ElevenLabs TTS (stream MP3)
-    const elevenLabsResponse = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
-      {
-        text: responseText,
-        model_id: 'eleven_multilingual_v2', // or your preferred model
-        voice_settings: { stability: 0.5, similarity_boost: 0.5 } // optional
-      },
-      {
-        headers: {
-          'xi-api-key': process.env.ELEVENLABS_API_KEY,
-          'accept': 'audio/mpeg'
-        },
-        responseType: 'stream'
-      }
+    // Synthesize speech with Deepgram TTS (mu-law for Twilio compatibility)
+    const ttsResponse = await deepgram.speak.request(
+      { text: responseText },
+      { model: 'aura-helios-en', encoding: 'mulaw', sample_rate: 8000, container: 'none' }
     );
+    const audioStream = await ttsResponse.getStream();
+    if (!audioStream) throw new Error('TTS stream failed');
     
-    // Convert MP3 stream to mu-law Buffer using fluent-ffmpeg
-    const mp3Stream = elevenLabsResponse.data;
-    const mulawBuffer = await new Promise((resolve, reject) => {
-      let buffers = [];
-      fluentFfmpeg(mp3Stream)
-        .audioCodec('pcm_mulaw')
-        .audioFrequency(8000)
-        .audioChannels(1)
-        .format('mulaw')
-        .on('error', reject)
-        .on('end', () => resolve(Buffer.concat(buffers)))
-        .pipe()
-        .on('data', chunk => buffers.push(chunk));
-    });
-    console.log('TTS audio generated (converted to mu-law), length:', mulawBuffer.length);
+    // Convert stream to Buffer (no file headers)
+    const chunks = [];
+    for await (const chunk of audioStream) {
+      chunks.push(chunk);
+    }
+    const audioBuffer = Buffer.concat(chunks);
+    console.log('TTS audio generated, length:', audioBuffer.length);
     
     // Send audio back to Twilio via WebSocket (split into 160-byte chunks, paced at 20ms)
     if (isTwilio && ws.readyState === WebSocket.OPEN) {
+      console.log('Starting audio send to Twilio');
       let offset = 0;
       let sequenceNumber = 1;
       let timestamp = 0;
       const chunkSize = 160; // ~20ms of mu-law audio
-      while (offset < mulawBuffer.length) {
-        const end = Math.min(offset + chunkSize, mulawBuffer.length);
-        const chunk = mulawBuffer.slice(offset, end);
+      while (offset < audioBuffer.length) {
+        const end = Math.min(offset + chunkSize, audioBuffer.length);
+        const chunk = audioBuffer.slice(offset, end);
         ws.send(JSON.stringify({
           event: 'media',
           streamSid: streamSid,
           media: {
+            track: 'outbound', // Required for Twilio to play on caller side
             payload: chunk.toString('base64')
           },
           sequenceNumber: sequenceNumber.toString(),
           timestamp: timestamp.toString()
         }));
+        console.log(`Sent audio chunk ${sequenceNumber}, length: ${chunk.length}`);
         offset = end;
         sequenceNumber++;
         timestamp += 20; // Increment by ms per chunk
