@@ -1,4 +1,4 @@
-// index.js (Updated: Removed 'track' from media JSON to fix Twilio 31951 error, added send validation/logging)
+// index.js (Updated: Adjusted media JSON format to match working example - added 'track', 'chunk', 'timestamp' inside media, removed top-level sequenceNumber/timestamp)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -349,7 +349,7 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
     if (isTwilio && ws.readyState === WebSocket.OPEN) {
       console.log('Starting audio send to Twilio');
       let offset = 0;
-      let sequenceNumber = 1;
+      let chunkNumber = 1; // Changed from sequenceNumber to chunk as per example
       let timestamp = 0;
       const chunkSize = 160; // ~20ms of mu-law audio
       let sentBytes = 0;
@@ -364,15 +364,16 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
           event: 'media',
           streamSid: streamSid,
           media: {
-            payload: chunk.toString('base64') // No 'track' - Twilio infers outbound
-          },
-          sequenceNumber: sequenceNumber.toString(),
-          timestamp: timestamp.toString()
+            track: 'outbound', // Added back per working example
+            chunk: chunkNumber.toString(), // Per example
+            timestamp: timestamp.toString(),
+            payload: chunk.toString('base64')
+          }
         }));
-        console.log(`Sent audio chunk ${sequenceNumber}, length: ${chunk.length}`);
+        console.log(`Sent audio chunk ${chunkNumber}, length: ${chunk.length}`);
         sentBytes += chunk.length;
         offset = end;
-        sequenceNumber++;
+        chunkNumber++;
         timestamp += 20; // Increment by ms per chunk
         await new Promise(resolve => setTimeout(resolve, 20)); // Pace to match real-time playback
       }
