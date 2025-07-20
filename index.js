@@ -1,4 +1,4 @@
-// index.js (Updated: Switched TTS to ElevenLabs for better quality/voice selection, simplified media JSON to match Twilio docs (no chunk/timestamp/track), added more logging)
+// index.js (Updated: Adjusted media JSON format to match working example - added 'chunk', 'timestamp' inside media, removed top-level sequenceNumber/timestamp)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -34,7 +34,7 @@ app.options('*', cors());
 // ✅ Static audio files
 app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
 
-// ✅ Deepgram setup (for STT only now)
+// ✅ Deepgram setup
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 // ✅ Health check
@@ -429,7 +429,6 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
-
 
 
 
