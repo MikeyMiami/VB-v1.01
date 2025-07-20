@@ -1,4 +1,4 @@
-// index.js (Updated: Switched TTS to ElevenLabs for better quality/voice selection, removed 'track' to avoid errors, added voice ID env)
+// index.js (Updated: Switched TTS to ElevenLabs for better quality/voice selection, simplified media JSON to match Twilio docs (no chunk/timestamp/track), added more logging)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
