@@ -1,4 +1,4 @@
-// index.js (Updated: Adjusted media JSON format to match working example - added 'track', 'chunk', 'timestamp' inside media, removed top-level sequenceNumber/timestamp)
+// index.js (Updated: Switched TTS to ElevenLabs for better quality/voice selection, removed 'track' to avoid errors, added voice ID env)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -34,7 +34,7 @@ app.options('*', cors());
 // ✅ Static audio files
 app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
 
-// ✅ Deepgram setup
+// ✅ Deepgram setup (for STT only now)
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 // ✅ Health check
@@ -349,7 +349,7 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
     if (isTwilio && ws.readyState === WebSocket.OPEN) {
       console.log('Starting audio send to Twilio');
       let offset = 0;
-      let chunkNumber = 1; // Changed from sequenceNumber to chunk as per example
+      let sequenceNumber = 1;
       let timestamp = 0;
       const chunkSize = 160; // ~20ms of mu-law audio
       let sentBytes = 0;
@@ -364,16 +364,15 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
           event: 'media',
           streamSid: streamSid,
           media: {
-            track: 'outbound', // Added back per working example
-            chunk: chunkNumber.toString(), // Per example
-            timestamp: timestamp.toString(),
-            payload: chunk.toString('base64')
-          }
+            payload: chunk.toString('base64') // No 'track' - Twilio infers outbound
+          },
+          sequenceNumber: sequenceNumber.toString(),
+          timestamp: timestamp.toString()
         }));
-        console.log(`Sent audio chunk ${chunkNumber}, length: ${chunk.length}`);
+        console.log(`Sent audio chunk ${sequenceNumber}, length: ${chunk.length}`);
         sentBytes += chunk.length;
         offset = end;
-        chunkNumber++;
+        sequenceNumber++;
         timestamp += 20; // Increment by ms per chunk
         await new Promise(resolve => setTimeout(resolve, 20)); // Pace to match real-time playback
       }
