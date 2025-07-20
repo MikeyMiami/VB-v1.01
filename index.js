@@ -321,25 +321,56 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid) {
     const responseText = completion.choices[0].message.content.trim();
     console.log('AI response text:', responseText);
     
-    // Synthesize speech with Deepgram TTS (mu-law for Twilio compatibility)
-    const ttsResponse = await deepgram.speak.request(
-      { text: responseText },
-      { model: 'aura-helios-en', encoding: 'mulaw', sample_rate: 8000, container: 'none' }
-    );
-    const audioStream = await ttsResponse.getStream();
-    if (!audioStream) throw new Error('TTS stream failed');
-    
-    // Convert stream to Buffer (no file headers)
+    // Synthesize speech with ElevenLabs TTS (streaming for low latency)
+    const voiceId = process.env.ELEVENLABS_VOICE_ID || 'uYXf8XasLslADfZ2MB4u'; // Default or cloned ID
+    const response = await axios({
+      method: 'post',
+      url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
+      headers: {
+        'xi-api-key': process.env.ELEVENLABS_API_KEY,
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg'
+      },
+      data: {
+        text: responseText,
+        model_id: 'eleven_monolingual_v1',
+        voice_settings: {
+          stability: 0.4,
+          similarity_boost: 0.75
+        }
+      },
+      responseType: 'stream'
+    });
+
+    // Convert stream to Buffer (MP3 from ElevenLabs)
     const chunks = [];
-    for await (const chunk of audioStream) {
+    for await (const chunk of response.data) {
       chunks.push(chunk);
     }
     let audioBuffer = Buffer.concat(chunks);
-    console.log('TTS audio generated, length:', audioBuffer.length);
-    
+    console.log('ElevenLabs TTS audio generated (MP3), length:', audioBuffer.length);
+
+    // Resample MP3 to mu-law 8000Hz mono for Twilio (using ffmpeg)
+    audioBuffer = await new Promise((resolve, reject) => {
+      const inputStream = new stream.PassThrough();
+      inputStream.end(audioBuffer);
+      let buffers = [];
+      fluentFfmpeg(inputStream)
+        .inputFormat('mp3')
+        .audioCodec('pcm_mulaw')
+        .audioChannels(1)
+        .audioFrequency(8000)
+        .format('mulaw')
+        .on('error', reject)
+        .on('end', () => resolve(Buffer.concat(buffers)))
+        .pipe(new stream.PassThrough({ highWaterMark: 1 << 25 }))
+        .on('data', chunk => buffers.push(chunk));
+    });
+    console.log('Audio resampled to mu-law, length:', audioBuffer.length);
+
     // Save TTS as WAV for manual debug (mu-law to PCM)
     const ttsFilename = `tts_response_${Date.now()}.wav`;
-    saveChunkAsWav(audioBuffer, ttsFilename); // Reuse save function (it's mu-law input)
+    saveChunkAsWav(audioBuffer, ttsFilename);
     
     // Optional: Append short silence to end for flush
     const silence = generateSilenceBuffer(500); // 0.5s silence
@@ -398,6 +429,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+```
 
 
 
