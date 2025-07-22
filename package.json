@@ -1,3 +1,4 @@
+// VB-v1.01-main/package.json
 {
   "name": "voicebot-backend",
   "version": "1.0.0",
@@ -19,8 +20,6 @@
     "ws": "^8.13.0",
     "fluent-ffmpeg": "^2.1.2",
     "ffmpeg-static": "^5.2.0",
-    "mongoose": "^8.5.1",
-    "bullmq": "^5.10.2",
     "node-cron": "^3.0.3",
     "@hubspot/api-client": "^11.0.0",
     "jsforce": "^3.4.0",
@@ -28,7 +27,8 @@
     "googleapis": "^140.0.1",
     "jsonwebtoken": "^9.0.2",
     "bcryptjs": "^2.4.3",
-    "mongoose-encryption": "^2.1.0"
+    "sqlite3": "^5.1.7",
+    "bullmq": "^5.10.2"
   }
 }
 
