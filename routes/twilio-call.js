@@ -54,7 +54,7 @@ router.post('/voice', (req, res) => {
     } else {
       twiml.say(agent.prompt_script ? agent.prompt_script.substring(0, 100) : 'Hello, this is the AI agent. Please speak your question.');
     }
-    twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL, statusCallback: `${PUBLIC_URL}/twilio-call/status`, statusCallbackMethod: 'POST' });
+    twiml.connect().stream({ url: `${PUBLIC_URL}/ws?botId=${botId}`, statusCallback: `${PUBLIC_URL}/twilio-call/status`, statusCallbackMethod: 'POST' });
     twiml.pause({ length: 120 }); // Keeps call open for 120 seconds; increased for longer responses
     res.type('text/xml');
     res.send(twiml.toString());
