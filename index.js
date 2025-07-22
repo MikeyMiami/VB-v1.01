@@ -1,5 +1,4 @@
-// VB-v1.01-main/index.js
-// index.js (Updated: Fixed media JSON format to match working Deepgram example - added 'track', 'chunk', 'timestamp' inside media, removed top-level sequenceNumber/timestamp)
+// index.js (No change needed, but included for reference)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -143,7 +142,7 @@ app.use('/outbound', require('./routes/outbound'));
 app.use('/twilio-call', require('./routes/twilio-call'));
 app.use('/playback', require('./routes/playback'));
 app.use('/realtime', require('./routes/realtime'));
-app.use('/agents', authMiddleware, require('./routes/agents')); // New protected route
+app.use('/agents', require('./routes/agents')); // Updated: No authMiddleware here; it's now selective in agents.js
 
 // ✅ Debug route
 app.get('/debug-route', (req, res) => {
@@ -442,7 +441,7 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
     console.log('AI response text:', responseText);
     
     // Synthesize speech with ElevenLabs TTS (streaming for low latency)
-    const voiceId = process.env.ELEVENLABS_VOICE_ID || 'uYXf8XasLslADfZ2MB4u'; // Default or cloned ID
+    const voiceId = agent.voice_id || process.env.ELEVENLABS_VOICE_ID || 'uYXf8XasLslADfZ2MB4u'; // Per-bot voice ID with fallback
     const response = await axios({
       method: 'post',
       url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
