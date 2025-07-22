@@ -1,4 +1,3 @@
-// VB-v1.01-main/routes/agents.js
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
@@ -11,7 +10,7 @@ const redisConnection = {
   password: process.env.REDIS_PASSWORD
 };
 
-// Register (generate API key for new user)
+// Register (generate API key for new user) - No auth required
 router.post('/register', async (req, res) => {
   const { userId } = req.body;
   try {
@@ -25,12 +24,12 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// Create bot
+// Protected routes below (require authMiddleware)
 router.post('/create', (req, res) => {
-  const { userId, name, prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, call_days, double_dial_no_answer, integrationId } = req.body;
+  const { userId, name, prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, call_days, double_dial_no_answer, integrationId, voice_id } = req.body;
   const callDaysJson = JSON.stringify(call_days || []);
-  db.run(`INSERT INTO Agents (userId, name, prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, call_days, double_dial_no_answer, integrationId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [userId, name, prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, callDaysJson, double_dial_no_answer ? 1 : 0, integrationId],
+  db.run(`INSERT INTO Agents (userId, name, prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, call_days, double_dial_no_answer, integrationId, voice_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [userId, name, prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, callDaysJson, double_dial_no_answer ? 1 : 0, integrationId, voice_id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ botId: this.lastID });
@@ -40,10 +39,10 @@ router.post('/create', (req, res) => {
 
 // Update bot
 router.patch('/update/:botId', (req, res) => {
-  const { prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, call_days, double_dial_no_answer, integrationId } = req.body;
+  const { prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, call_days, double_dial_no_answer, integrationId, voice_id } = req.body;
   const callDaysJson = JSON.stringify(call_days || []);
-  db.run(`UPDATE Agents SET prompt_script = ?, dial_limit = ?, max_calls_per_contact = ?, call_time_start = ?, call_time_end = ?, call_days = ?, double_dial_no_answer = ?, integrationId = ?, modifiedDate = CURRENT_TIMESTAMP WHERE id = ?`,
-    [prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, callDaysJson, double_dial_no_answer ? 1 : 0, integrationId, req.params.botId],
+  db.run(`UPDATE Agents SET prompt_script = ?, dial_limit = ?, max_calls_per_contact = ?, call_time_start = ?, call_time_end = ?, call_days = ?, double_dial_no_answer = ?, integrationId = ?, voice_id = ?, modifiedDate = CURRENT_TIMESTAMP WHERE id = ?`,
+    [prompt_script, dial_limit, max_calls_per_contact, call_time_start, call_time_end, callDaysJson, double_dial_no_answer ? 1 : 0, integrationId, voice_id, req.params.botId],
     (err) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ success: true });
@@ -77,6 +76,19 @@ router.post('/test/:botId', async (req, res) => {
     await callQueue.add('dial', { botId: agent.id, phone: to, contactId: 'test' });
     res.json({ success: true });
   });
+});
+
+// Middleware for protected routes (applied after public ones)
+router.use((req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret');
+    req.userId = decoded.userId;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid key' });
+  }
 });
 
 module.exports = router;
