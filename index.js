@@ -1,4 +1,5 @@
-// index.js (No change needed, but included for reference)
+// VB-v1.01-main/index.js
+// index.js (Updated: Fixed media JSON format to match working Deepgram example - added 'track', 'chunk', 'timestamp' inside media, removed top-level sequenceNumber/timestamp)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -250,8 +251,9 @@ function saveBufferedAudioAsWav(bufferedMulaw, filename) {
   console.log(`Saved buffered audio (longer segment) for debugging: ${fullPath}`);
 }
 
-wss.on('connection', async (ws) => {
+wss.on('connection', async (ws, request) => { // Add request param for query
   console.log('🟢 WebSocket connected');
+  const botId = new URL(request.url, 'http://localhost').searchParams.get('botId'); // Parse botId from query
   let isTwilio = false;
   let streamSid = null;
   let dgConnection = null;
@@ -304,7 +306,7 @@ wss.on('connection', async (ws) => {
             if (!isTwilio) {
               ws.send(JSON.stringify({ transcript }));
             }
-            await streamAiResponse(transcript, ws, isTwilio, streamSid, req.query.botId); // Pass botId from query
+            await streamAiResponse(transcript, ws, isTwilio, streamSid, botId); // Use botId from connection
             responding = false; // Unlock after done
           } else {
             if (transcript?.length > 0) console.log('📝 Interim Transcript (skipped):', transcript);
@@ -361,7 +363,7 @@ wss.on('connection', async (ws) => {
               if (!isTwilio) {
                 ws.send(JSON.stringify({ transcript }));
               }
-              await streamAiResponse(transcript, ws, isTwilio, streamSid, req.query.botId);
+              await streamAiResponse(transcript, ws, isTwilio, streamSid, botId); // Use botId from connection
               responding = false;
             } else {
               if (transcript?.length > 0) console.log('📝 Interim Transcript (skipped):', transcript);
