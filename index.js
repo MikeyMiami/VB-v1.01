@@ -1,3 +1,4 @@
+// VB-v1.01-main/index.js
 // index.js (Updated: Fixed media JSON format to match working Deepgram example - added 'track', 'chunk', 'timestamp' inside media, removed top-level sequenceNumber/timestamp)
 const express = require('express');
 const app = express();
@@ -13,11 +14,12 @@ const fluentFfmpeg = require('fluent-ffmpeg');
 const { OpenAI } = require('openai');
 const stream = require('stream');
 const fs = require('fs');
-const mongoose = require('mongoose');
 const cron = require('node-cron');
 const { Queue, Worker } = require('bullmq');
 const jwt = require('jsonwebtoken');
 const twilio = require('twilio');
+const db = require('./db'); // SQLite DB
+const { fetchLeads, bookAppointment } = require('./utils/integrations');
 
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 
@@ -33,67 +35,69 @@ if (!fs.existsSync(audioDir)) {
   fs.mkdirSync(audioDir, { recursive: true });
 }
 
-// Models
-const Agent = require('./models/Agent');
-const CallLog = require('./models/CallLog');
-const DashboardStat = require('./models/DashboardStat');
-const Integration = require('./models/Integration');
-
-// Connect DB
-mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB error:', err));
-
-// Call Queue (BullMQ)
-const callQueue = new Queue('calls', { connection: { host: process.env.REDIS_HOST || 'localhost', port: process.env.REDIS_PORT || 6379, password: process.env.REDIS_PASSWORD } });
+// Call Queue (BullMQ with Redis)
+const redisConnection = {
+  host: process.env.REDIS_HOST || 'localhost',
+  port: process.env.REDIS_PORT || 6379,
+  password: process.env.REDIS_PASSWORD
+};
+const callQueue = new Queue('calls', { connection: redisConnection });
 
 // Worker to process calls
 new Worker('calls', async job => {
-  const { botId, to, contactId } = job.data;
-  const agent = await Agent.findById(botId);
-  if (!agent || !agent.active) return;
-
-  // Check limits
-  const today = new Date().toISOString().split('T')[0];
-  const dailyStats = await DashboardStat.findOne({ botId, date: today }) || new DashboardStat({ botId, date: today, dials_count: 0 });
-  if (dailyStats.dials_count >= agent.dial_limit) return;
-
-  const contactCalls = await CallLog.countDocuments({ botId, contact_phone: to, call_date: { $gte: new Date(today) } });
-  if (contactCalls >= agent.max_calls_per_contact) return;
-
-  // Initiate Twilio call
-  const call = await client.calls.create({
-    to,
-    from: process.env.TWILIO_NUMBER,
-    url: `${process.env.PUBLIC_URL}/twilio-call/voice?botId=${botId}`,
-    statusCallback: `${process.env.PUBLIC_URL}/twilio-call/status?botId=${botId}&contactId=${contactId}&to=${to}`,
-    statusCallbackMethod: 'POST'
+  const { botId, phone, contactId } = job.data;
+  let agent;
+  db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, row) => {
+    if (err || !row || !row.active) return;
+    agent = row;
   });
 
-  // Update stats
-  dailyStats.dials_count++;
-  await dailyStats.save();
-  // Optional: Sync to Bubble via axios.post to Bubble Data API
-}, { connection: { host: process.env.REDIS_HOST || 'localhost', port: process.env.REDIS_PORT || 6379, password: process.env.REDIS_PASSWORD } });
+  const canDial = await canDialContact(botId, phone);
+  if (!canDial) return;
 
-// Cron for autopilot (every hour)
-cron.schedule('0 * * * *', async () => {
+  try {
+    const call = await client.calls.create({
+      to: phone,
+      from: process.env.TWILIO_NUMBER,
+      url: `${process.env.PUBLIC_URL}/twilio-call/voice?botId=${botId}`,
+      statusCallback: `${process.env.PUBLIC_URL}/twilio-call/status?botId=${botId}&contactId=${contactId}&to=${phone}`,
+      statusCallbackMethod: 'POST'
+    });
+
+    // Update stats
+    const today = new Date().toISOString().split('T')[0];
+    db.get(`SELECT * FROM DashboardStats WHERE botId = ? AND date = ?`, [botId, today], (err, stat) => {
+      if (err) return;
+      const dials = (stat ? stat.dials_count : 0) + 1;
+      if (stat) {
+        db.run(`UPDATE DashboardStats SET dials_count = ? WHERE id = ?`, [dials, stat.id]);
+      } else {
+        db.run(`INSERT INTO DashboardStats (botId, date, dials_count) VALUES (?, ?, 1)`, [botId, today]);
+      }
+    });
+  } catch (err) {
+    console.error('Call processing error:', err);
+    // Optional: job.failed(err.message);
+  }
+}, { connection: redisConnection });
+
+// Cron for autopilot (every hour) - Adds to queue
+cron.schedule('0 * * * *', () => {
   const now = new Date();
   const day = now.toLocaleString('en-us', { weekday: 'long' }).toLowerCase();
   const hour = now.getHours();
 
-  const activeAgents = await Agent.find({ active: true, call_days: { $in: [day] } });
-  for (const agent of activeAgents) {
-    if (hour < agent.call_time_start || hour >= agent.call_time_end) continue;
+  db.all(`SELECT * FROM Agents WHERE active = 1 AND call_days LIKE '%${day}%'`, [], async (err, activeAgents) => {
+    if (err) return console.error('Cron error:', err);
+    for (const agent of activeAgents) {
+      if (hour < agent.call_time_start || hour >= agent.call_time_end) continue;
 
-    // Fetch leads from CRM
-    const leads = await fetchLeads(agent.integrationId);
-    for (const lead of leads) {
-      if (await canDialContact(agent._id, lead.phone)) {
-        await callQueue.add('dial', { botId: agent._id, to: lead.phone, contactId: lead.id });
+      const leads = await fetchLeads(agent.integrationId);
+      for (const lead of leads) {
+        await callQueue.add('dial', { botId: agent.id, phone: lead.phone, contactId: lead.id });
       }
     }
-  }
+  });
 });
 
 // Auth Middleware
@@ -392,7 +396,12 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
   try {
     console.log('Generating AI response for transcript:', transcript);
     
-    const agent = await Agent.findById(botId);
+    let agent;
+    db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, row) => {
+      if (err || !row) throw new Error('Agent not found');
+      agent = row;
+    });
+
     // Generate response with OpenAI (customize prompt/model if needed)
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini', // Efficient and cheap; use 'gpt-4o' for better quality
@@ -533,12 +542,23 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
 }
 
 async function canDialContact(agentId, phone) {
-  const today = new Date().toISOString().split('T')[0];
-  const agent = await Agent.findById(agentId);
-  const dailyStats = await DashboardStat.findOne({ botId: agentId, date: today });
-  if (dailyStats.dials_count >= agent.dial_limit) return false;
-  const contactCalls = await CallLog.countDocuments({ botId: agentId, contact_phone: phone, call_date: { $gte: new Date(today) } });
-  return contactCalls < agent.max_calls_per_contact;
+  return new Promise((resolve, reject) => {
+    const today = new Date().toISOString().split('T')[0];
+    db.get(`SELECT * FROM Agents WHERE id = ?`, [agentId], (err, agent) => {
+      if (err) return reject(err);
+      if (!agent) return resolve(false);
+
+      db.get(`SELECT * FROM DashboardStats WHERE botId = ? AND date = ?`, [agentId, today], (err, stat) => {
+        if (err) return reject(err);
+        if ((stat ? stat.dials_count : 0) >= agent.dial_limit) return resolve(false);
+
+        db.get(`SELECT COUNT(*) as count FROM CallLogs WHERE botId = ? AND contact_phone = ? AND DATE(call_date) = ?`, [agentId, phone, today], (err, row) => {
+          if (err) return reject(err);
+          resolve(row.count < agent.max_calls_per_contact);
+        });
+      });
+    });
+  });
 }
 
 // ✅ Server start
@@ -546,7 +566,6 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
-
 
 
 
