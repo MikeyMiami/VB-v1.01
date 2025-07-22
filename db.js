@@ -1,4 +1,3 @@
-// VB-v1.01-main/db.js
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
@@ -24,6 +23,7 @@ db.serialize(() => {
       double_dial_no_answer BOOLEAN,
       active BOOLEAN DEFAULT 0,
       integrationId TEXT,
+      voice_id TEXT,
       createdDate DATETIME DEFAULT CURRENT_TIMESTAMP,
       modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -70,6 +70,18 @@ db.serialize(() => {
       modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Add voice_id column if not exists
+  db.get("PRAGMA table_info(Agents)", (err, rows) => {
+    if (err) return console.error(err);
+    const hasVoiceId = rows.some(row => row.name === 'voice_id');
+    if (!hasVoiceId) {
+      db.run("ALTER TABLE Agents ADD COLUMN voice_id TEXT", (err) => {
+        if (err) console.error('Error adding voice_id column:', err);
+        else console.log('Added voice_id column to Agents table');
+      });
+    }
+  });
 });
 
 module.exports = db;
