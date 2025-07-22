@@ -1,3 +1,4 @@
+// VB-v1.01-main/db.js
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
@@ -72,7 +73,7 @@ db.serialize(() => {
   `);
 
   // Add voice_id column if not exists
-  db.get("PRAGMA table_info(Agents)", (err, rows) => {
+  db.all("PRAGMA table_info(Agents)", (err, rows) => {
     if (err) return console.error(err);
     const hasVoiceId = rows.some(row => row.name === 'voice_id');
     if (!hasVoiceId) {
