@@ -1,11 +1,17 @@
+// VB-v1.01-main/routes/twilio-call.js
 // twilio-call.js (Updated: Added statusCallback for dynamic handling)
 const express = require('express');
 const router = express.Router();
 const twilio = require('twilio');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
-const Agent = require('../models/Agent');
-const CallLog = require('../models/CallLog');
+const db = require('../db');
 const { Queue } = require('bullmq');
+
+const redisConnection = {
+  host: process.env.REDIS_HOST || 'localhost',
+  port: process.env.REDIS_PORT || 6379,
+  password: process.env.REDIS_PASSWORD
+};
 
 const {
   TWILIO_SID,
@@ -39,44 +45,48 @@ router.post('/start', async (req, res) => {
 });
 
 // 📞 Initial call response (greeting + stream + pause)
-router.post('/voice', async (req, res) => {
+router.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
   const botId = req.query.botId;
-  const agent = await Agent.findById(botId);
-  twiml.say(agent.prompt_script ? agent.prompt_script.substring(0, 100) : 'Hello, this is the AI agent. Please speak your question.'); // Use initial prompt snippet
-  twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL, statusCallback: `${PUBLIC_URL}/twilio-call/status`, statusCallbackMethod: 'POST' });
-  twiml.pause({ length: 120 }); // Keeps call open for 120 seconds; increased for longer responses
-  res.type('text/xml');
-  res.send(twiml.toString());
+  db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, agent) => {
+    if (err || !agent) {
+      twiml.say('Hello, this is the AI agent. Please speak your question.');
+    } else {
+      twiml.say(agent.prompt_script ? agent.prompt_script.substring(0, 100) : 'Hello, this is the AI agent. Please speak your question.');
+    }
+    twiml.connect().stream({ url: DEEPGRAM_SOCKET_URL, statusCallback: `${PUBLIC_URL}/twilio-call/status`, statusCallbackMethod: 'POST' });
+    twiml.pause({ length: 120 }); // Keeps call open for 120 seconds; increased for longer responses
+    res.type('text/xml');
+    res.send(twiml.toString());
+  });
 });
 
 // Status callback route to handle events
-router.post('/status', async (req, res) => {
+router.post('/status', (req, res) => {
   const { CallStatus, botId, contactId, to } = req.body;
   console.log('Call status update:', req.body);
 
-  const agent = await Agent.findById(botId);
+  db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], async (err, agent) => {
+    if (err || !agent) return res.sendStatus(200);
 
-  if (CallStatus === 'no-answer' && agent.double_dial_no_answer) {
-    // Re-queue
-    const callQueue = new Queue('calls', { connection: { host: process.env.REDIS_HOST || 'localhost', port: process.env.REDIS_PORT || 6379, password: process.env.REDIS_PASSWORD } });
-    await callQueue.add('dial', { botId, to, contactId });
-  }
+    if (CallStatus === 'no-answer' && agent.double_dial_no_answer) {
+      // Re-queue
+      const callQueue = new Queue('calls', { connection: redisConnection });
+      await callQueue.add('dial', { botId, phone: to, contactId });
+    }
 
-  // Log call
-  const log = new CallLog({
-    botId,
-    call_date: new Date(),
-    call_duration: req.body.CallDuration,
-    call_outcome: CallStatus,
-    contact_phone: to,
-    // Add other fields as needed, e.g., recording URL from Twilio if enabled
+    // Log call
+    db.run(`INSERT INTO CallLogs (botId, call_date, call_duration, call_outcome, contact_phone) VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?)`,
+      [botId, req.body.CallDuration || 0, CallStatus, to],
+      (err) => {
+        if (err) console.error('Log error:', err);
+      }
+    );
+
+    // Optional: Sync to Bubble via axios.post to Bubble Data API
+
+    res.sendStatus(200); // Acknowledge
   });
-  await log.save();
-
-  // Optional: Sync to Bubble via axios.post to Bubble Data API
-
-  res.sendStatus(200); // Acknowledge
 });
 
 module.exports = router;
