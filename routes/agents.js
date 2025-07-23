@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const jwt = require('jsonwebtoken');
 const { Queue } = require('bullmq');
+const { fetchLeads } = require('../utils/integrations');
 
 const redisConnection = {
   host: process.env.REDIS_HOST || 'localhost',
@@ -75,6 +76,23 @@ router.post('/test/:botId', async (req, res) => {
     const callQueue = new Queue('calls', { connection: redisConnection });
     await callQueue.add('dial', { botId: agent.id, phone: to, contactId: 'test' });
     res.json({ success: true });
+  });
+});
+
+// Fetch leads for a bot
+router.post('/leads/:botId', async (req, res) => {
+  const { listId } = req.body; // Optional: User can specify a HubSpot list ID
+  db.get(`SELECT integrationId FROM Agents WHERE id = ?`, [req.params.botId], async (err, agent) => {
+    if (err || !agent) return res.status(404).json({ error: 'Bot not found' });
+    if (!agent.integrationId) return res.status(400).json({ error: 'No integration configured' });
+
+    try {
+      const leads = await fetchLeads(agent.integrationId, listId); // Pass listId if provided
+      res.json({ leads });
+    } catch (err) {
+      console.error('Error fetching leads:', err.message);
+      res.status(500).json({ error: 'Failed to fetch leads' });
+    }
   });
 });
 
