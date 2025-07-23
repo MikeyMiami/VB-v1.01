@@ -1,4 +1,3 @@
-// VB-v1.01-main/routes/agents.js
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
