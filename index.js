@@ -254,11 +254,6 @@ function saveBufferedAudioAsWav(bufferedMulaw, filename) {
 wss.on('connection', async (ws, request) => { // Add request param for query
   console.log('🟢 WebSocket connected');
   const botId = new URL(request.url, 'http://localhost').searchParams.get('botId'); // Parse botId from query
-  if (!botId) {
-    console.error('No botId provided in WebSocket URL');
-    ws.close();
-    return;
-  }
   let isTwilio = false;
   let streamSid = null;
   let dgConnection = null;
@@ -402,160 +397,151 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
   try {
     console.log('Generating AI response for transcript:', transcript);
     
-    let agent;
-    return new Promise((resolve, reject) => {
+    let agent = await new Promise((resolve, reject) => {
       db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, row) => {
-        if (err) {
-          console.error('DB error fetching agent:', err);
-          reject(err);
-        } else if (!row) {
-          console.warn('Agent not found for botId:', botId);
-          agent = { prompt_script: 'You are a helpful AI assistant. Respond concisely and naturally.' }; // Fallback prompt
-        } else {
-          agent = row;
-        }
-        resolve();
+        if (err) reject(err);
+        resolve(row);
       });
-    }).then(() => {
-      // Generate response with OpenAI (customize prompt/model if needed)
-      return openai.chat.completions.create({
-        model: 'gpt-4o-mini', // Efficient and cheap; use 'gpt-4o' for better quality
-        messages: [
-          { role: 'system', content: agent.prompt_script || 'You are a helpful AI assistant. Respond concisely and naturally.' },
-          { role: 'user', content: transcript }
-        ],
-        tools: [{ 
-          type: 'function',
-          function: {
-            name: 'book_appointment',
-            description: 'Book an appointment if user agrees',
-            parameters: {
-              type: 'object',
-              properties: {
-                time: { type: 'string' },
-                details: { type: 'string' }
-              }
-            }
-          }
-        }],
-        tool_choice: 'auto',
-        max_tokens: 150,
-        temperature: 0.7
-      });
-    }).then(completion => {
-      let responseText = completion.choices[0].message.content.trim();
-
-      if (completion.choices[0].message.tool_calls) {
-        const toolCall = completion.choices[0].message.tool_calls[0];
-        if (toolCall.function.name === 'book_appointment') {
-          const args = JSON.parse(toolCall.function.arguments);
-          return bookAppointment(agent.integrationId, args.time, args.details).then(() => {
-            responseText = 'Appointment booked successfully!'; // Or generate follow-up
-          });
-        }
-      }
-
-      console.log('AI response text:', responseText);
-      
-      // Synthesize speech with ElevenLabs TTS (streaming for low latency)
-      const voiceId = agent.voice_id || process.env.ELEVENLABS_VOICE_ID || 'uYXf8XasLslADfZ2MB4u'; // Per-bot voice ID with fallback
-      return axios({
-        method: 'post',
-        url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
-        headers: {
-          'xi-api-key': process.env.ELEVENLABS_API_KEY,
-          'Content-Type': 'application/json',
-          'Accept': 'audio/mpeg'
-        },
-        data: {
-          text: responseText,
-          model_id: 'eleven_monolingual_v1',
-          voice_settings: {
-            stability: 0.4,
-            similarity_boost: 0.75
-          }
-        },
-        responseType: 'stream'
-      });
-    }).then(response => {
-      // Convert stream to Buffer (MP3 from ElevenLabs)
-      const chunks = [];
-      return new Promise((resolve, reject) => {
-        response.data.on('data', chunk => chunks.push(chunk));
-        response.data.on('end', () => resolve(Buffer.concat(chunks)));
-        response.data.on('error', reject);
-      });
-    }).then(audioBuffer => {
-      console.log('ElevenLabs TTS audio generated (MP3), length:', audioBuffer.length);
-
-      // Resample MP3 to mu-law 8000Hz mono for Twilio (using ffmpeg)
-      return new Promise((resolve, reject) => {
-        const inputStream = new stream.PassThrough();
-        inputStream.end(audioBuffer);
-        let buffers = [];
-        fluentFfmpeg(inputStream)
-          .inputFormat('mp3')
-          .audioCodec('pcm_mulaw')
-          .audioChannels(1)
-          .audioFrequency(8000)
-          .format('mulaw')
-          .on('error', reject)
-          .on('end', () => resolve(Buffer.concat(buffers)))
-          .pipe(new stream.PassThrough({ highWaterMark: 1 << 25 }))
-          .on('data', chunk => buffers.push(chunk));
-      });
-    }).then(audioBuffer => {
-      console.log('Audio resampled to mu-law, length:', audioBuffer.length);
-
-      // Save TTS as WAV for manual debug (mu-law to PCM)
-      const ttsFilename = `tts_response_${Date.now()}.wav`;
-      saveChunkAsWav(audioBuffer, ttsFilename);
-      
-      // Optional: Append short silence to end for flush
-      const silence = generateSilenceBuffer(500); // 0.5s silence
-      audioBuffer = Buffer.concat([audioBuffer, silence]);
-      
-      // Send audio back to Twilio via WebSocket (split into 160-byte chunks, paced at 20ms)
-      if (isTwilio && ws.readyState === WebSocket.OPEN) {
-        console.log('Starting audio send to Twilio');
-        let offset = 0;
-        let chunkNumber = 1;
-        let timestamp = 0;
-        const chunkSize = 160; // ~20ms of mu-law audio
-        let sentBytes = 0;
-        while (offset < audioBuffer.length) {
-          if (ws.readyState !== WebSocket.OPEN) {
-            console.warn('WebSocket closed mid-send; aborting remaining audio');
-            break;
-          }
-          const end = Math.min(offset + chunkSize, audioBuffer.length);
-          const chunk = audioBuffer.slice(offset, end);
-          ws.send(JSON.stringify({
-            event: 'media',
-            streamSid: streamSid,
-            media: {
-              track: 'outbound',
-              chunk: chunkNumber.toString(),
-              timestamp: timestamp.toString(),
-              payload: chunk.toString('base64')
-            }
-          }));
-          console.log(`Sent audio chunk ${chunkNumber}, length: ${chunk.length}`);
-          sentBytes += chunk.length;
-          offset = end;
-          chunkNumber++;
-          timestamp += 20; // Increment by ms per chunk
-          return new Promise(resolve => setTimeout(resolve, 20)); // Pace to match real-time playback
-        }
-        if (sentBytes === audioBuffer.length) {
-          console.log('Audio sent to Twilio successfully');
-        } else {
-          console.warn(`Audio send incomplete (sent ${sentBytes}/${audioBuffer.length} bytes)`);
-        }
-      } else {
-        console.warn('Not Twilio or WebSocket closed; skipping audio send');
-      }
     });
+    if (!agent) {
+      console.warn('Agent not found for botId:', botId);
+      agent = { prompt_script: 'You are a helpful AI assistant. Respond concisely and naturally.' }; // Fallback prompt
+    }
+
+    // Generate response with OpenAI (customize prompt/model if needed)
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini', // Efficient and cheap; use 'gpt-4o' for better quality
+      messages: [
+        { role: 'system', content: agent.prompt_script || 'You are a helpful AI assistant. Respond concisely and naturally.' },
+        { role: 'user', content: transcript }
+      ],
+      tools: [{ 
+        type: 'function',
+        function: {
+          name: 'book_appointment',
+          description: 'Book an appointment if user agrees',
+          parameters: {
+            type: 'object',
+            properties: {
+              time: { type: 'string' },
+              details: { type: 'string' }
+            }
+          }
+        }
+      }],
+      tool_choice: 'auto',
+      max_tokens: 150,
+      temperature: 0.7
+    });
+
+    let responseText = completion.choices[0].message.content.trim();
+
+    if (completion.choices[0].message.tool_calls) {
+      const toolCall = completion.choices[0].message.tool_calls[0];
+      if (toolCall.function.name === 'book_appointment') {
+        const args = JSON.parse(toolCall.function.arguments);
+        await bookAppointment(agent.integrationId, args.time, args.details);
+        responseText = 'Appointment booked successfully!'; // Or generate follow-up
+      }
+    }
+
+    console.log('AI response text:', responseText);
+    
+    // Synthesize speech with ElevenLabs TTS (streaming for low latency)
+    const voiceId = agent.voice_id || process.env.ELEVENLABS_VOICE_ID || 'uYXf8XasLslADfZ2MB4u'; // Per-bot voice ID with fallback
+    const response = await axios({
+      method: 'post',
+      url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
+      headers: {
+        'xi-api-key': process.env.ELEVENLABS_API_KEY,
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg'
+      },
+      data: {
+        text: responseText,
+        model_id: 'eleven_monolingual_v1',
+        voice_settings: {
+          stability: 0.4,
+          similarity_boost: 0.75
+        }
+      },
+      responseType: 'stream'
+    });
+
+    // Convert stream to Buffer (MP3 from ElevenLabs)
+    const chunks = [];
+    for await (const chunk of response.data) {
+      chunks.push(chunk);
+    }
+    let audioBuffer = Buffer.concat(chunks);
+    console.log('ElevenLabs TTS audio generated (MP3), length:', audioBuffer.length);
+
+    // Resample MP3 to mu-law 8000Hz mono for Twilio (using ffmpeg)
+    audioBuffer = await new Promise((resolve, reject) => {
+      const inputStream = new stream.PassThrough();
+      inputStream.end(audioBuffer);
+      let buffers = [];
+      fluentFfmpeg(inputStream)
+        .inputFormat('mp3')
+        .audioCodec('pcm_mulaw')
+        .audioChannels(1)
+        .audioFrequency(8000)
+        .format('mulaw')
+        .on('error', reject)
+        .on('end', () => resolve(Buffer.concat(buffers)))
+        .pipe(new stream.PassThrough({ highWaterMark: 1 << 25 }))
+        .on('data', chunk => buffers.push(chunk));
+    });
+    console.log('Audio resampled to mu-law, length:', audioBuffer.length);
+
+    // Save TTS as WAV for manual debug (mu-law to PCM)
+    const ttsFilename = `tts_response_${Date.now()}.wav`;
+    saveChunkAsWav(audioBuffer, ttsFilename);
+    
+    // Optional: Append short silence to end for flush
+    const silence = generateSilenceBuffer(500); // 0.5s silence
+    audioBuffer = Buffer.concat([audioBuffer, silence]);
+    
+    // Send audio back to Twilio via WebSocket (split into 160-byte chunks, paced at 20ms)
+    if (isTwilio && ws.readyState === WebSocket.OPEN) {
+      console.log('Starting audio send to Twilio');
+      let offset = 0;
+      let chunkNumber = 1;
+      let timestamp = 0;
+      const chunkSize = 160; // ~20ms of mu-law audio
+      let sentBytes = 0;
+      while (offset < audioBuffer.length) {
+        if (ws.readyState !== WebSocket.OPEN) {
+          console.warn('WebSocket closed mid-send; aborting remaining audio');
+          break;
+        }
+        const end = Math.min(offset + chunkSize, audioBuffer.length);
+        const chunk = audioBuffer.slice(offset, end);
+        ws.send(JSON.stringify({
+          event: 'media',
+          streamSid: streamSid,
+          media: {
+            track: 'outbound',
+            chunk: chunkNumber.toString(),
+            timestamp: timestamp.toString(),
+            payload: chunk.toString('base64')
+          }
+        }));
+        console.log(`Sent audio chunk ${chunkNumber}, length: ${chunk.length}`);
+        sentBytes += chunk.length;
+        offset = end;
+        chunkNumber++;
+        timestamp += 20; // Increment by ms per chunk
+        await new Promise(resolve => setTimeout(resolve, 20)); // Pace to match real-time playback
+      }
+      if (sentBytes === audioBuffer.length) {
+        console.log('Audio sent to Twilio successfully');
+      } else {
+        console.warn(`Audio send incomplete (sent ${sentBytes}/${audioBuffer.length} bytes)`);
+      }
+    } else {
+      console.warn('Not Twilio or WebSocket closed; skipping audio send');
+    }
   } catch (error) {
     console.error('Error in streamAiResponse:', error.message);
   }
