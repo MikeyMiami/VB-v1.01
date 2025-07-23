@@ -21,11 +21,11 @@ async function fetchLeads(integrationId, listId) {
           if (listId) {
             // Fetch contacts from a specific list
             const membershipsApi = client.crm.lists.membershipsApi;
-            const listResponse = await membershipsApi.getPage(listId, 100, undefined, ['phone'], false, false); // Limit as number 100
+            const listResponse = await membershipsApi.getPage(listId, '100', '', ['phone'], 'false', 'false'); // All params as string
             results = listResponse.results.map(contact => ({ phone: contact.properties.phone, id: contact.id }));
           } else {
             // Fetch all contacts if no listId
-            const { results: allContacts } = await client.crm.contacts.basicApi.getPage(100, undefined, ['phone'], false); // Limit as number 100
+            const { results: allContacts } = await client.crm.contacts.basicApi.getPage('100', '', ['phone'], 'false'); // All params as string
             results = allContacts.map(c => ({ phone: c.properties.phone, id: c.id }));
           }
           resolve(results);
