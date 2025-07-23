@@ -20,8 +20,8 @@ async function fetchLeads(integrationId, listId) {
           let results;
           if (listId) {
             // Fetch contacts from a specific list
-            const listApi = client.crm.lists.basicApi;
-            const listResponse = await listApi.getById(listId, null, null, null, 100); // Limit 100 for now
+            const membershipsApi = client.crm.lists.membershipsApi;
+            const listResponse = await membershipsApi.getPage(listId, 100, undefined, ['phone'], false, false); // Limit 100 for now
             results = listResponse.results.map(contact => ({ phone: contact.properties.phone, id: contact.id }));
           } else {
             // Fetch all contacts if no listId
@@ -79,6 +79,7 @@ async function bookAppointment(integrationId, time, details) {
           resolve();
           break;
         case 'calendly':
+          // Assuming calendly-api package; adjust if different
           const Calendly = require('calendly-api'); // Install if needed
           const client = new Calendly({ apiKey: integration.api_key });
           await client.invitees.create({ event: creds.event_uri, name: details, time }); // Adjust fields
