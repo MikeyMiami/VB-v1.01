@@ -1,7 +1,8 @@
+// VB-v1.01-main/routes/agents.js
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { Queue } = require('bullmq');
 
 const redisConnection = {
@@ -11,13 +12,13 @@ const redisConnection = {
 };
 
 // Register (generate API key for new user) - No auth required
-router.post('/register', async (req, res) => {
+router.post('/register', (req, res) => {
   const { userId } = req.body;
   try {
-    const hashedKey = await bcrypt.hash(userId + Date.now().toString(), 10);
-    db.run(`INSERT INTO Integrations (userId, api_key) VALUES (?, ?)`, [userId, hashedKey], function(err) {
+    const apiKey = jwt.sign({ userId }, process.env.JWT_SECRET || 'your-secret', { expiresIn: '1y' }); // Generate JWT
+    db.run(`INSERT INTO Integrations (userId, api_key) VALUES (?, ?)`, [userId, apiKey], function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      res.json({ apiKey: hashedKey });
+      res.json({ apiKey });
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
