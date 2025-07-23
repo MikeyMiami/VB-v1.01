@@ -1,4 +1,3 @@
-// VB-v1.01-main/index.js
 // index.js (Updated: Fixed media JSON format to match working Deepgram example - added 'track', 'chunk', 'timestamp' inside media, removed top-level sequenceNumber/timestamp)
 const express = require('express');
 const app = express();
@@ -115,6 +114,7 @@ const authMiddleware = async (req, res, next) => {
 
 // ✅ Middleware
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Added to parse Twilio callbacks
 app.use(cors());
 app.options('*', cors());
 
