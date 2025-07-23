@@ -1,5 +1,5 @@
 // VB-v1.01-main/utils/integrations.js
-async function fetchLeads(integrationId) {
+async function fetchLeads(integrationId, listId) {
   return new Promise((resolve, reject) => {
     const db = require('../db');
     db.get(`SELECT * FROM Integrations WHERE id = ?`, [integrationId], async (err, integration) => {
@@ -17,8 +17,18 @@ async function fetchLeads(integrationId) {
         case 'hubspot':
           const hubspot = require('@hubspot/api-client');
           const client = new hubspot.Client({ accessToken: integration.api_key });
-          const { results } = await client.crm.contacts.basicApi.getPage();
-          resolve(results.map(c => ({ phone: c.properties.phone, id: c.id })));
+          let results;
+          if (listId) {
+            // Fetch contacts from a specific list
+            const listApi = client.crm.lists.basicApi;
+            const listResponse = await listApi.getById(listId, null, null, null, 100); // Limit 100 for now
+            results = listResponse.results.map(contact => ({ phone: contact.properties.phone, id: contact.id }));
+          } else {
+            // Fetch all contacts if no listId
+            const { results: allContacts } = await client.crm.contacts.basicApi.getPage();
+            results = allContacts.map(c => ({ phone: c.properties.phone, id: c.id }));
+          }
+          resolve(results);
           break;
         case 'salesforce':
           const jsforce = require('jsforce');
@@ -69,7 +79,6 @@ async function bookAppointment(integrationId, time, details) {
           resolve();
           break;
         case 'calendly':
-          // Assuming calendly-api package; adjust if different
           const Calendly = require('calendly-api'); // Install if needed
           const client = new Calendly({ apiKey: integration.api_key });
           await client.invitees.create({ event: creds.event_uri, name: details, time }); // Adjust fields
