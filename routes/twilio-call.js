@@ -1,4 +1,3 @@
-// VB-v1.01-main/routes/twilio-call.js
 // twilio-call.js (Updated: Added statusCallback for dynamic handling)
 const express = require('express');
 const router = express.Router();
@@ -63,8 +62,8 @@ router.post('/voice', (req, res) => {
 
 // Status callback route to handle events
 router.post('/status', (req, res) => {
+  console.log('Call status update:', JSON.stringify(req.body)); // Log full body for debug
   const { CallStatus, botId, contactId, to } = req.body;
-  console.log('Call status update:', req.body);
 
   db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], async (err, agent) => {
     if (err || !agent) return res.sendStatus(200);
