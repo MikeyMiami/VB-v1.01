@@ -144,6 +144,7 @@ app.use('/twilio-call', require('./routes/twilio-call'));
 app.use('/playback', require('./routes/playback'));
 app.use('/realtime', require('./routes/realtime'));
 app.use('/agents', require('./routes/agents')); // Updated: No authMiddleware here; it's now selective in agents.js
+app.use('/integrations', authMiddleware, require('./routes/integrations'));
 
 // ✅ Debug route
 app.get('/debug-route', (req, res) => {
