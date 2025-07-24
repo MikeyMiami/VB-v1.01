@@ -1,4 +1,3 @@
-// VB-v1.01-main/utils/integrations.js
 const db = require('../db');
 const hubspot = require('@hubspot/api-client');
 
@@ -24,11 +23,10 @@ async function fetchLeads(integrationId, listIdParam) {
         const listId = parseInt(listIdParam);
         if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
 
-        let allContactIds = [];
+        let allContacts = [];
         let hasMore = true;
         let vidOffset;
 
-        // STEP 1: Fetch all contact IDs from the list
         while (hasMore) {
           const qs = { count: 100 };
           if (vidOffset !== undefined) qs.vidOffset = vidOffset;
@@ -53,43 +51,38 @@ async function fetchLeads(integrationId, listIdParam) {
             return reject(new Error('Failed to parse HubSpot list response'));
           }
 
-          const ids = (json.contacts || []).map(c => c.vid);
-          allContactIds.push(...ids);
+          const contacts = json.contacts || [];
+          allContacts.push(...contacts);
 
           hasMore = json['has-more'];
           vidOffset = json['vid-offset'];
         }
 
-        console.log("📥 TOTAL CONTACT IDs:", allContactIds);
+        console.log("📥 TOTAL CONTACTS:", allContacts.length);
 
-        // STEP 2: Fetch each contact's full info from CRM v3
-        const results = [];
-        for (const contactId of allContactIds) {
-          try {
-            const contact = await client.crm.contacts.basicApi.getById(
-              contactId.toString(),
-              undefined,
-              ['firstname', 'lastname', 'email', 'phone']
-            );
+        const leads = allContacts.map(contact => {
+          const vid = contact.vid;
 
-            const props = contact?.body?.properties || {};
-            const name = `${props.firstname || ''} ${props.lastname || ''}`.trim();
-            const email = props.email || '';
-            const phone = props.phone || '';
+          const identityProfile = contact['identity-profiles']?.[0];
+          const emailIdentity = identityProfile?.identities?.find(i => i.type === 'EMAIL');
+          const email = emailIdentity?.value || '';
 
-            results.push({
-              id: contactId,
-              name: name || 'Unnamed',
-              email,
-              phone
-            });
-          } catch (fetchErr) {
-            console.warn(`⚠️ Could not fetch contact ${contactId}:`, fetchErr.message);
-          }
-        }
+          const firstName = contact.properties?.firstname?.value || '';
+          const lastName = contact.properties?.lastname?.value || '';
+          const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
 
-        console.log("✅ FINAL MAPPED LEADS:", results);
-        return resolve(results);
+          const phone = contact.properties?.phone?.value || '';
+
+          return {
+            id: vid,
+            name,
+            email,
+            phone
+          };
+        });
+
+        console.log("✅ FINAL MAPPED LEADS:", leads);
+        return resolve(leads);
       } catch (apiErr) {
         console.error("❌ HubSpot API error:", apiErr.message);
         return reject(apiErr);
