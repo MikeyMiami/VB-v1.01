@@ -20,7 +20,7 @@ async function fetchLeads(integrationId, listId) {
           let results;
           try {
             if (listId) {
-              // Fetch contacts from a specific list
+              // Fetch contacts from a specific list x
               const membershipsApi = client.crm.lists.membershipsApi;
               const listResponse = await membershipsApi.getPage(
                 listId,
