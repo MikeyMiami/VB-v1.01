@@ -25,20 +25,24 @@ async function fetchLeads(integrationId, listIdParam) {
 
             let allContacts = [];
             let hasMore = true;
-            let vidOffset = undefined;
+            let vidOffset;
 
             while (hasMore) {
+              const qs = {
+                count: 100,
+                property: ['firstname', 'lastname', 'phone', 'email']
+              };
+              if (vidOffset !== undefined) {
+                qs.vidOffset = vidOffset;
+              }
+
               const response = await client.apiRequest({
                 method: 'GET',
                 path: `/contacts/v1/lists/${listId}/contacts/all`,
-                qs: {
-                  count: 100,
-                  vidOffset,
-                  property: ['firstname', 'lastname', 'phone', 'email']
-                }
+                qs
               });
 
-              // ✅ Read and parse the stream response manually
+              // Parse the stream manually
               const chunks = [];
               for await (const chunk of response.body) {
                 chunks.push(chunk);
