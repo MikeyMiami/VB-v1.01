@@ -16,86 +16,83 @@ async function fetchLeads(integrationId, listIdParam) {
       }
 
       try {
-        switch (integration.integration_type) {
-          case 'hubspot':
-            const client = new hubspot.Client({ accessToken: integration.api_key });
-
-            const listId = parseInt(listIdParam);
-            if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
-
-            let allContacts = [];
-            let hasMore = true;
-            let vidOffset;
-
-            while (hasMore) {
-              const qs = {
-                count: 100,
-                property: ['firstname', 'lastname', 'phone', 'email']
-              };
-              if (vidOffset !== undefined) {
-                qs.vidOffset = vidOffset;
-              }
-
-              const response = await client.apiRequest({
-                method: 'GET',
-                path: `/contacts/v1/lists/${listId}/contacts/all`,
-                qs
-              });
-
-              const chunks = [];
-              for await (const chunk of response.body) {
-                chunks.push(chunk);
-              }
-              const raw = Buffer.concat(chunks).toString('utf-8');
-
-              let json;
-              try {
-                json = JSON.parse(raw);
-              } catch (e) {
-                console.error("❌ Error parsing HubSpot JSON:", raw);
-                return reject(new Error('Failed to parse HubSpot response'));
-              }
-
-              console.log("🔍 PARSED HUBSPOT JSON:", JSON.stringify(json, null, 2));
-
-              const page = json.contacts || [];
-              allContacts = allContacts.concat(page);
-
-              hasMore = json['has-more'];
-              vidOffset = json['vid-offset'];
-            }
-
-            const contacts = allContacts.map(c => {
-              const props = c.properties || {};
-              console.log("📎 RAW CONTACT PROPERTIES:", c.vid, props);
-
-              const phone = props.phone?.value || '';
-              const first = props.firstname?.value || '';
-              const last = props.lastname?.value || '';
-              const name = `${first} ${last}`.trim();
-
-              // Get email from identity profile
-              const identities = c['identity-profiles']?.[0]?.identities || [];
-              const emailObj = identities.find(i => i.type === 'EMAIL');
-              const email = emailObj?.value || '';
-
-              return {
-                id: c.vid,
-                name: name || 'Unnamed',
-                phone,
-                email
-              };
-            });
-
-            console.log("✅ FINAL MAPPED LEADS:", contacts);
-
-            return resolve(contacts);
-
-          default:
-            return resolve([]);
+        if (integration.integration_type !== 'hubspot') {
+          return resolve([]);
         }
+
+        const client = new hubspot.Client({ accessToken: integration.api_key });
+        const listId = parseInt(listIdParam);
+        if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
+
+        let allContactIds = [];
+        let hasMore = true;
+        let vidOffset;
+
+        // STEP 1: Get all contact IDs in the list
+        while (hasMore) {
+          const qs = { count: 100 };
+          if (vidOffset !== undefined) qs.vidOffset = vidOffset;
+
+          const response = await client.apiRequest({
+            method: 'GET',
+            path: `/contacts/v1/lists/${listId}/contacts/all`,
+            qs
+          });
+
+          const chunks = [];
+          for await (const chunk of response.body) {
+            chunks.push(chunk);
+          }
+          const raw = Buffer.concat(chunks).toString('utf-8');
+
+          let json;
+          try {
+            json = JSON.parse(raw);
+          } catch (e) {
+            console.error("❌ Error parsing HubSpot JSON:", raw);
+            return reject(new Error('Failed to parse HubSpot list response'));
+          }
+
+          const ids = (json.contacts || []).map(c => c.vid);
+          allContactIds.push(...ids);
+
+          hasMore = json['has-more'];
+          vidOffset = json['vid-offset'];
+        }
+
+        console.log("📥 TOTAL CONTACT IDs:", allContactIds);
+
+        // STEP 2: Fetch full data for each contact
+        const results = [];
+        for (const contactId of allContactIds) {
+          try {
+            const contact = await client.crm.contacts.basicApi.getById(contactId.toString(), [
+              'firstname',
+              'lastname',
+              'email',
+              'phone'
+            ]);
+
+            const props = contact?.body?.properties || {};
+            const name = `${props.firstname || ''} ${props.lastname || ''}`.trim();
+            const email = props.email || '';
+            const phone = props.phone || '';
+
+            results.push({
+              id: contactId,
+              name: name || 'Unnamed',
+              email,
+              phone
+            });
+          } catch (fetchErr) {
+            console.warn(`⚠️ Could not fetch contact ${contactId}:`, fetchErr.message);
+          }
+        }
+
+        console.log("✅ FINAL MAPPED LEADS:", results);
+        return resolve(results);
       } catch (apiErr) {
-        console.error("❌ API error:", apiErr.message);
+        console.error("❌ HubSpot API error:", apiErr.message);
         return reject(apiErr);
       }
     });
