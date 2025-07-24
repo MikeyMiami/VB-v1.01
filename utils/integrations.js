@@ -23,11 +23,11 @@ async function fetchLeads(integrationId, listIdParam) {
         const listId = parseInt(listIdParam);
         if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
 
-        let allContacts = [];
+        // Step 1: Get contact IDs from list
+        const contactIds = [];
         let hasMore = true;
         let vidOffset;
 
-        // Step 1: Get all contact IDs from the list
         while (hasMore) {
           const qs = { count: 100 };
           if (vidOffset !== undefined) qs.vidOffset = vidOffset;
@@ -53,41 +53,41 @@ async function fetchLeads(integrationId, listIdParam) {
           }
 
           const contacts = json.contacts || [];
-          allContacts.push(...contacts);
+          for (const contact of contacts) {
+            if (contact.vid) contactIds.push(contact.vid);
+          }
 
           hasMore = json['has-more'];
           vidOffset = json['vid-offset'];
         }
 
-        console.log("📥 TOTAL CONTACT IDs:", allContacts.map(c => c.vid));
+        console.log("📥 TOTAL CONTACT IDs:", contactIds);
 
-        // Step 2: Fetch full details for each contact
+        // Step 2: Fetch full contact details using V3 API
         const leads = [];
-        for (const contact of allContacts) {
-          const vid = contact.vid;
 
+        for (const contactId of contactIds) {
           try {
-            const fullContact = await client.crm.contacts.basicApi.getById(vid.toString(), [
-              'firstname',
-              'lastname',
-              'email',
-              'phone',
-              'mobilephone',
-              'hs_phone_number'
-            ]);
+            const contactDetails = await client.crm.contacts.basicApi.getById(
+              contactId,
+              ['firstname', 'lastname', 'email', 'phone'] // ✅ Explicitly request these
+            );
 
-            const props = fullContact?.body?.properties || {};
-            const firstName = props.firstname || '';
-            const lastName = props.lastname || '';
+            const props = contactDetails?.properties || {};
+            console.log(`📦 Fetched Contact ID ${contactId}:`, props);
+
+            const name = `${props.firstname || ''} ${props.lastname || ''}`.trim() || 'Unnamed';
             const email = props.email || '';
-            const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
-            const phone = props.phone || props.mobilephone || props.hs_phone_number || '';
+            const phone = props.phone || '';
 
-            console.log(`📦 Fetched Contact ID ${vid}:`, props);
-
-            leads.push({ id: vid, name, email, phone });
+            leads.push({
+              id: contactId,
+              name,
+              email,
+              phone
+            });
           } catch (err) {
-            console.error(`❌ Failed to fetch full contact ${vid}:`, err.message);
+            console.warn(`⚠️ Failed to fetch contact ID ${contactId}:`, err.message);
           }
         }
 
