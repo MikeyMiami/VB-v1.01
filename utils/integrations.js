@@ -75,7 +75,13 @@ async function fetchLeads(integrationId, listIdParam) {
               const phone = c.properties?.phone?.value || '';
               const first = c.properties?.firstname?.value || '';
               const last = c.properties?.lastname?.value || '';
-              const name = `${first} ${last}`.trim() || 'Unnamed';
+
+              const emailPrefix = email.split('@')[0] || '';
+              const fallbackName = emailPrefix
+                .replace(/\./g, ' ')
+                .replace(/(^|\s)\S/g, l => l.toUpperCase());
+
+              const name = `${first} ${last}`.trim() || fallbackName || 'Unnamed';
 
               return {
                 id: c.vid,
