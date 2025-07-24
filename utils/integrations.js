@@ -28,7 +28,10 @@ async function fetchLeads(integrationId, listIdParam) {
         let vidOffset;
 
         while (hasMore) {
-          const qs = { count: 100 };
+          const qs = {
+            count: 100,
+            property: ['firstname', 'lastname', 'email', 'phone', 'mobilephone', 'hs_phone_number']
+          };
           if (vidOffset !== undefined) qs.vidOffset = vidOffset;
 
           const response = await client.apiRequest({
@@ -62,23 +65,19 @@ async function fetchLeads(integrationId, listIdParam) {
 
         const leads = allContacts.map(contact => {
           const vid = contact.vid;
+          const props = contact.properties || {};
 
-          const identityProfile = contact['identity-profiles']?.[0];
-          const emailIdentity = identityProfile?.identities?.find(i => i.type === 'EMAIL');
-          const email = emailIdentity?.value || '';
+          console.log(`📦 PROPERTIES FOR CONTACT ID ${vid}:`, props);
 
-          const firstName = contact.properties?.firstname?.value || '';
-          const lastName = contact.properties?.lastname?.value || '';
+          const firstName = props.firstname?.value || '';
+          const lastName = props.lastname?.value || '';
+          const email = props.email?.value || '';
           const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
 
-          // 🔍 DEBUG: Print all properties to check for phone-related keys
-          console.log(`📦 PROPERTIES FOR CONTACT ID ${vid}:`, contact.properties);
-
-          // Try multiple phone-related fields
           const phone =
-            contact.properties?.phone?.value ||
-            contact.properties?.mobilephone?.value ||
-            contact.properties?.phone_number?.value ||
+            props.phone?.value ||
+            props.mobilephone?.value ||
+            props.hs_phone_number?.value ||
             '';
 
           return {
