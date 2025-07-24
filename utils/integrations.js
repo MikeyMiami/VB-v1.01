@@ -38,6 +38,8 @@ async function fetchLeads(integrationId, listIdParam) {
                 }
               });
 
+              console.log("🔍 RAW HUBSPOT RESPONSE:", JSON.stringify(response.body, null, 2));
+
               const page = response.body.contacts || [];
               allContacts = allContacts.concat(page);
 
@@ -45,12 +47,16 @@ async function fetchLeads(integrationId, listIdParam) {
               vidOffset = response.body['vid-offset'];
             }
 
+            console.log("📦 CONTACTS BEFORE MAPPING:", JSON.stringify(allContacts, null, 2));
+
             const contacts = allContacts.map(c => ({
               id: c.vid,
               name: `${c.properties.firstname?.value || ''} ${c.properties.lastname?.value || ''}`.trim() || 'Unnamed',
               phone: c.properties.phone?.value || '',
               email: c.properties.email?.value || ''
             }));
+
+            console.log("✅ FINAL MAPPED LEADS:", contacts);
 
             return resolve(contacts);
 
