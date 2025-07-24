@@ -38,13 +38,28 @@ async function fetchLeads(integrationId, listIdParam) {
                 }
               });
 
-              console.log("🔍 RAW HUBSPOT RESPONSE:", JSON.stringify(response.body, null, 2));
+              // ✅ Read and parse the stream response manually
+              const chunks = [];
+              for await (const chunk of response.body) {
+                chunks.push(chunk);
+              }
+              const raw = Buffer.concat(chunks).toString('utf-8');
 
-              const page = response.body.contacts || [];
+              let json;
+              try {
+                json = JSON.parse(raw);
+              } catch (e) {
+                console.error("❌ Error parsing HubSpot JSON:", raw);
+                return reject(new Error('Failed to parse HubSpot response'));
+              }
+
+              console.log("🔍 PARSED HUBSPOT JSON:", JSON.stringify(json, null, 2));
+
+              const page = json.contacts || [];
               allContacts = allContacts.concat(page);
 
-              hasMore = response.body['has-more'];
-              vidOffset = response.body['vid-offset'];
+              hasMore = json['has-more'];
+              vidOffset = json['vid-offset'];
             }
 
             console.log("📦 CONTACTS BEFORE MAPPING:", JSON.stringify(allContacts, null, 2));
@@ -64,6 +79,7 @@ async function fetchLeads(integrationId, listIdParam) {
             return resolve([]);
         }
       } catch (apiErr) {
+        console.error("❌ API error:", apiErr.message);
         return reject(apiErr);
       }
     });
