@@ -28,7 +28,7 @@ async function fetchLeads(integrationId, listIdParam) {
         let hasMore = true;
         let vidOffset;
 
-        // STEP 1: Get all contact IDs in the list
+        // STEP 1: Fetch all contact IDs from the list
         while (hasMore) {
           const qs = { count: 100 };
           if (vidOffset !== undefined) qs.vidOffset = vidOffset;
@@ -62,16 +62,15 @@ async function fetchLeads(integrationId, listIdParam) {
 
         console.log("📥 TOTAL CONTACT IDs:", allContactIds);
 
-        // STEP 2: Fetch full data for each contact
+        // STEP 2: Fetch each contact's full info from CRM v3
         const results = [];
         for (const contactId of allContactIds) {
           try {
-            const contact = await client.crm.contacts.basicApi.getById(contactId.toString(), [
-              'firstname',
-              'lastname',
-              'email',
-              'phone'
-            ]);
+            const contact = await client.crm.contacts.basicApi.getById(
+              contactId.toString(),
+              undefined,
+              ['firstname', 'lastname', 'email', 'phone']
+            );
 
             const props = contact?.body?.properties || {};
             const name = `${props.firstname || ''} ${props.lastname || ''}`.trim();
