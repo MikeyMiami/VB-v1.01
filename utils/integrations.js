@@ -42,7 +42,6 @@ async function fetchLeads(integrationId, listIdParam) {
                 qs
               });
 
-              // Parse the stream manually
               const chunks = [];
               for await (const chunk of response.body) {
                 chunks.push(chunk);
@@ -68,12 +67,23 @@ async function fetchLeads(integrationId, listIdParam) {
 
             console.log("📦 CONTACTS BEFORE MAPPING:", JSON.stringify(allContacts, null, 2));
 
-            const contacts = allContacts.map(c => ({
-              id: c.vid,
-              name: `${c.properties.firstname?.value || ''} ${c.properties.lastname?.value || ''}`.trim() || 'Unnamed',
-              phone: c.properties.phone?.value || '',
-              email: c.properties.email?.value || ''
-            }));
+            const contacts = allContacts.map(c => {
+              const identities = c['identity-profiles']?.[0]?.identities || [];
+              const emailObj = identities.find(i => i.type === 'EMAIL');
+              const email = emailObj?.value || '';
+
+              const phone = c.properties?.phone?.value || '';
+              const first = c.properties?.firstname?.value || '';
+              const last = c.properties?.lastname?.value || '';
+              const name = `${first} ${last}`.trim() || 'Unnamed';
+
+              return {
+                id: c.vid,
+                name,
+                phone,
+                email
+              };
+            });
 
             console.log("✅ FINAL MAPPED LEADS:", contacts);
 
