@@ -23,18 +23,31 @@ async function fetchLeads(integrationId, listIdParam) {
             const listId = parseInt(listIdParam);
             if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
 
-            const response = await client.apiRequest({
-              method: 'GET',
-              path: `/contacts/v1/lists/${listId}/contacts/all`,
-              qs: {
-                count: 100,
-                property: ['firstname', 'lastname', 'phone', 'email']
-              }
-            });
+            let allContacts = [];
+            let hasMore = true;
+            let vidOffset = undefined;
 
-            const contacts = (response.body.contacts || []).map(c => ({
+            while (hasMore) {
+              const response = await client.apiRequest({
+                method: 'GET',
+                path: `/contacts/v1/lists/${listId}/contacts/all`,
+                qs: {
+                  count: 100,
+                  vidOffset,
+                  property: ['firstname', 'lastname', 'phone', 'email']
+                }
+              });
+
+              const page = response.body.contacts || [];
+              allContacts = allContacts.concat(page);
+
+              hasMore = response.body['has-more'];
+              vidOffset = response.body['vid-offset'];
+            }
+
+            const contacts = allContacts.map(c => ({
               id: c.vid,
-              name: `${c.properties.firstname?.value || ''} ${c.properties.lastname?.value || ''}`.trim(),
+              name: `${c.properties.firstname?.value || ''} ${c.properties.lastname?.value || ''}`.trim() || 'Unnamed',
               phone: c.properties.phone?.value || '',
               email: c.properties.email?.value || ''
             }));
