@@ -23,16 +23,20 @@ async function fetchLeads(integrationId, listIdParam) {
             const listId = parseInt(listIdParam);
             if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
 
-            const response = await client.marketing.contacts.lists.getContactsInList(listId, {
-              count: 100,
-              property: ['firstname', 'lastname', 'phone', 'email']
+            const response = await client.apiRequest({
+              method: 'GET',
+              path: `/contacts/v1/lists/${listId}/contacts/all`,
+              qs: {
+                count: 100,
+                property: ['firstname', 'lastname', 'phone', 'email']
+              }
             });
 
-            const contacts = (response.results || []).map(c => ({
+            const contacts = (response.body.contacts || []).map(c => ({
               id: c.vid,
-              name: `${c.properties.firstname || ''} ${c.properties.lastname || ''}`.trim(),
-              phone: c.properties.phone,
-              email: c.properties.email
+              name: `${c.properties.firstname?.value || ''} ${c.properties.lastname?.value || ''}`.trim(),
+              phone: c.properties.phone?.value || '',
+              email: c.properties.email?.value || ''
             }));
 
             return resolve(contacts);
