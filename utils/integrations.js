@@ -65,23 +65,16 @@ async function fetchLeads(integrationId, listIdParam) {
 
         const leads = allContacts.map(contact => {
           const vid = contact.vid;
+          const props = contact.properties || {};
 
-          const identityProfile = contact['identity-profiles']?.[0];
-          const emailIdentity = identityProfile?.identities?.find(i => i.type === 'EMAIL');
-          const email = emailIdentity?.value || '';
+          // Debug log to inspect what we actually receive
+          console.log(`📦 PROPERTIES FOR CONTACT ID ${vid}:`, props);
 
-          const firstName = contact.properties?.firstname?.value || '';
-          const lastName = contact.properties?.lastname?.value || '';
+          const email = props.email?.value || '';
+          const firstName = props.firstname?.value || '';
+          const lastName = props.lastname?.value || '';
+          const phone = props.phone?.value || props.mobilephone?.value || '';
           const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
-
-          // Try multiple phone-related fields
-          const phone =
-            contact.properties?.phone?.value ||
-            contact.properties?.mobilephone?.value ||
-            '';
-
-          // 🔍 DEBUG: Show all properties to confirm phone is now included
-          console.log(`📦 PROPERTIES FOR CONTACT ID ${vid}:`, contact.properties);
 
           return {
             id: vid,
