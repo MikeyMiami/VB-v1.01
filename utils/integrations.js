@@ -65,27 +65,23 @@ async function fetchLeads(integrationId, listIdParam) {
               vidOffset = json['vid-offset'];
             }
 
-            console.log("📦 CONTACTS BEFORE MAPPING:", JSON.stringify(allContacts, null, 2));
-
             const contacts = allContacts.map(c => {
+              const props = c.properties || {};
+              console.log("📎 RAW CONTACT PROPERTIES:", c.vid, props);
+
+              const phone = props.phone?.value || '';
+              const first = props.firstname?.value || '';
+              const last = props.lastname?.value || '';
+              const name = `${first} ${last}`.trim();
+
+              // Get email from identity profile
               const identities = c['identity-profiles']?.[0]?.identities || [];
               const emailObj = identities.find(i => i.type === 'EMAIL');
               const email = emailObj?.value || '';
 
-              const phone = c.properties?.phone?.value || '';
-              const first = c.properties?.firstname?.value || '';
-              const last = c.properties?.lastname?.value || '';
-
-              const emailPrefix = email.split('@')[0] || '';
-              const fallbackName = emailPrefix
-                .replace(/\./g, ' ')
-                .replace(/(^|\s)\S/g, l => l.toUpperCase());
-
-              const name = `${first} ${last}`.trim() || fallbackName || 'Unnamed';
-
               return {
                 id: c.vid,
-                name,
+                name: name || 'Unnamed',
                 phone,
                 email
               };
