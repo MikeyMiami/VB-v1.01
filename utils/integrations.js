@@ -71,7 +71,10 @@ async function fetchLeads(integrationId, listIdParam) {
           const lastName = contact.properties?.lastname?.value || '';
           const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
 
-          // Try multiple fields for phone
+          // 🔍 DEBUG: Print all properties to check for phone-related keys
+          console.log(`📦 PROPERTIES FOR CONTACT ID ${vid}:`, contact.properties);
+
+          // Try multiple phone-related fields
           const phone =
             contact.properties?.phone?.value ||
             contact.properties?.mobilephone?.value ||
