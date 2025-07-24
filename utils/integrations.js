@@ -18,30 +18,35 @@ async function fetchLeads(integrationId, listId) {
           const hubspot = require('@hubspot/api-client');
           const client = new hubspot.Client({ accessToken: integration.api_key });
           let results;
-          if (listId) {
-            // Fetch contacts from a specific list
-            const membershipsApi = client.crm.lists.membershipsApi;
-            const listResponse = await membershipsApi.getPage(
-              listId,
-              {
-                limit: 20,
-                properties: ['phone'],
-                includeHistory: false
-              }
-            );
-            results = listResponse.results.map(contact => ({ phone: contact.properties.phone, id: contact.id }));
-          } else {
-            // Fetch all contacts if no listId
-            const { results: allContacts } = await client.crm.contacts.basicApi.getPage(
-              {
-                limit: 10,
-                properties: ['phone'],
-                includeHistory: false
-              }
-            );
-            results = allContacts.map(c => ({ phone: c.properties.phone, id: c.id }));
+          try {
+            if (listId) {
+              // Fetch contacts from a specific list
+              const membershipsApi = client.crm.lists.membershipsApi;
+              const listResponse = await membershipsApi.getPage(
+                listId,
+                {
+                  limit: 20,
+                  properties: ['phone'],
+                  includeHistory: false
+                }
+              );
+              results = listResponse.results.map(contact => ({ phone: contact.properties.phone, id: contact.id }));
+            } else {
+              // Fetch all contacts if no listId
+              const { results: allContacts } = await client.crm.contacts.basicApi.getPage(
+                {
+                  limit: 10,
+                  properties: ['phone'],
+                  includeHistory: false
+                }
+              );
+              results = allContacts.map(c => ({ phone: c.properties.phone, id: c.id }));
+            }
+            resolve(results);
+          } catch (apiErr) {
+            console.error('HubSpot API Error:', apiErr.message, 'Correlation ID:', apiErr.body?.correlationId);
+            reject(apiErr);
           }
-          resolve(results);
           break;
         case 'salesforce':
           const jsforce = require('jsforce');
