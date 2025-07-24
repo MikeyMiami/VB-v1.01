@@ -27,11 +27,9 @@ async function fetchLeads(integrationId, listIdParam) {
         let hasMore = true;
         let vidOffset;
 
+        // Step 1: Get all contact IDs from the list
         while (hasMore) {
-          const qs = {
-            count: 100,
-            property: ['firstname', 'lastname', 'email', 'phone', 'mobilephone', 'hs_phone_number']
-          };
+          const qs = { count: 100 };
           if (vidOffset !== undefined) qs.vidOffset = vidOffset;
 
           const response = await client.apiRequest({
@@ -61,32 +59,37 @@ async function fetchLeads(integrationId, listIdParam) {
           vidOffset = json['vid-offset'];
         }
 
-        console.log("📥 TOTAL CONTACTS:", allContacts.length);
+        console.log("📥 TOTAL CONTACT IDs:", allContacts.map(c => c.vid));
 
-        const leads = allContacts.map(contact => {
+        // Step 2: Fetch full details for each contact
+        const leads = [];
+        for (const contact of allContacts) {
           const vid = contact.vid;
-          const props = contact.properties || {};
 
-          console.log(`📦 PROPERTIES FOR CONTACT ID ${vid}:`, props);
+          try {
+            const fullContact = await client.crm.contacts.basicApi.getById(vid.toString(), [
+              'firstname',
+              'lastname',
+              'email',
+              'phone',
+              'mobilephone',
+              'hs_phone_number'
+            ]);
 
-          const firstName = props.firstname?.value || '';
-          const lastName = props.lastname?.value || '';
-          const email = props.email?.value || '';
-          const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
+            const props = fullContact?.body?.properties || {};
+            const firstName = props.firstname || '';
+            const lastName = props.lastname || '';
+            const email = props.email || '';
+            const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
+            const phone = props.phone || props.mobilephone || props.hs_phone_number || '';
 
-          const phone =
-            props.phone?.value ||
-            props.mobilephone?.value ||
-            props.hs_phone_number?.value ||
-            '';
+            console.log(`📦 Fetched Contact ID ${vid}:`, props);
 
-          return {
-            id: vid,
-            name,
-            email,
-            phone
-          };
-        });
+            leads.push({ id: vid, name, email, phone });
+          } catch (err) {
+            console.error(`❌ Failed to fetch full contact ${vid}:`, err.message);
+          }
+        }
 
         console.log("✅ FINAL MAPPED LEADS:", leads);
         return resolve(leads);
