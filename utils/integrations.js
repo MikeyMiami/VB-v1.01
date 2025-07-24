@@ -28,7 +28,10 @@ async function fetchLeads(integrationId, listIdParam) {
         let vidOffset;
 
         while (hasMore) {
-          const qs = { count: 100 };
+          const qs = {
+            count: 100,
+            property: ['firstname', 'lastname', 'email', 'phone', 'mobilephone']
+          };
           if (vidOffset !== undefined) qs.vidOffset = vidOffset;
 
           const response = await client.apiRequest({
@@ -71,15 +74,14 @@ async function fetchLeads(integrationId, listIdParam) {
           const lastName = contact.properties?.lastname?.value || '';
           const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
 
-          // 🔍 DEBUG: Print all properties to check for phone-related keys
-          console.log(`📦 PROPERTIES FOR CONTACT ID ${vid}:`, contact.properties);
-
           // Try multiple phone-related fields
           const phone =
             contact.properties?.phone?.value ||
             contact.properties?.mobilephone?.value ||
-            contact.properties?.phone_number?.value ||
             '';
+
+          // 🔍 DEBUG: Show all properties to confirm phone is now included
+          console.log(`📦 PROPERTIES FOR CONTACT ID ${vid}:`, contact.properties);
 
           return {
             id: vid,
