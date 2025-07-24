@@ -23,77 +23,54 @@ async function fetchLeads(integrationId, listIdParam) {
         const listId = parseInt(listIdParam);
         if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
 
-        let allContacts = [];
-        let hasMore = true;
-        let vidOffset;
-
-        while (hasMore) {
-          const qs = { count: 100 };
-          if (vidOffset !== undefined) qs.vidOffset = vidOffset;
-
-          const response = await client.apiRequest({
-            method: 'GET',
-            path: `/contacts/v1/lists/${listId}/contacts/all`,
-            qs
-          });
-
-          const chunks = [];
-          for await (const chunk of response.body) {
-            chunks.push(chunk);
-          }
-          const raw = Buffer.concat(chunks).toString('utf-8');
-
-          let json;
-          try {
-            json = JSON.parse(raw);
-          } catch (e) {
-            console.error("❌ Error parsing HubSpot JSON:", raw);
-            return reject(new Error('Failed to parse HubSpot list response'));
-          }
-
-          const contacts = json.contacts || [];
-          allContacts.push(...contacts);
-
-          hasMore = json['has-more'];
-          vidOffset = json['vid-offset'];
-        }
-
-        console.log("📥 TOTAL CONTACTS:", allContacts.length);
-
-        const leads = allContacts.map(contact => {
-          const vid = contact.vid;
-
-          const identityProfile = contact['identity-profiles']?.[0];
-          const emailIdentity = identityProfile?.identities?.find(i => i.type === 'EMAIL');
-          const email = emailIdentity?.value || '';
-
-          const firstName = contact.properties?.firstname?.value || '';
-          const lastName = contact.properties?.lastname?.value || '';
-          const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
-
-          const phone =
-            contact.properties?.phone?.value ||
-            contact.properties?.mobilephone?.value ||
-            contact.properties?.phone_number?.value ||
-            contact.properties?.hs_phone_number?.value ||
-            '';
-
-          const company = contact.properties?.company?.value || '';
-
-          return {
-            id: vid,
-            name,
-            email,
-            phone,
-            company
-          };
+        // Step 1: Get all contact IDs from the list
+        const listRes = await client.apiRequest({
+          method: 'GET',
+          path: `/contacts/v1/lists/${listId}/contacts/all`,
+          qs: { count: 100 }
         });
 
+        const chunks = [];
+        for await (const chunk of listRes.body) chunks.push(chunk);
+        const raw = Buffer.concat(chunks).toString('utf-8');
+        const parsed = JSON.parse(raw);
+
+        const contactIds = parsed.contacts.map(c => c.vid);
+        console.log("📥 TOTAL CONTACT IDs:", contactIds);
+
+        // Step 2: Use v3 to fetch full property details for each contact
+        const leads = [];
+
+        for (const id of contactIds) {
+          try {
+            const { body } = await client.apiRequest({
+              method: 'GET',
+              path: `/crm/v3/objects/contacts/${id}`,
+              qs: {
+                properties: ['firstname', 'lastname', 'email', 'phone', 'company']
+              }
+            });
+
+            const props = body.properties || {};
+            console.log(`📦 Fetched Contact ID ${id}:`, props);
+
+            leads.push({
+              id,
+              name: `${props.firstname || ''} ${props.lastname || ''}`.trim() || 'Unnamed',
+              email: props.email || '',
+              phone: props.phone || '',
+              company: props.company || ''
+            });
+          } catch (err) {
+            console.error(`❌ Failed to fetch contact ${id}:`, err.message);
+          }
+        }
+
         console.log("✅ FINAL MAPPED LEADS:", leads);
-        return resolve(leads);
+        resolve(leads);
       } catch (apiErr) {
         console.error("❌ HubSpot API error:", apiErr.message);
-        return reject(apiErr);
+        reject(apiErr);
       }
     });
   });
