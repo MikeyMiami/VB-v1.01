@@ -23,79 +23,70 @@ async function fetchLeads(integrationId, listIdParam) {
         const listId = parseInt(listIdParam);
         if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
 
-        // Step 1: Get contact IDs from list
-        const contactIds = [];
-        let hasMore = true;
-        let vidOffset;
+        // 1. Fetch contacts from the list
+        const listResp = await client.apiRequest({
+          method: 'GET',
+          path: `/contacts/v1/lists/${listId}/contacts/all`,
+          qs: { count: 100 }
+        });
 
-        while (hasMore) {
-          const qs = { count: 100 };
-          if (vidOffset !== undefined) qs.vidOffset = vidOffset;
-
-          const response = await client.apiRequest({
-            method: 'GET',
-            path: `/contacts/v1/lists/${listId}/contacts/all`,
-            qs
-          });
-
-          const chunks = [];
-          for await (const chunk of response.body) {
-            chunks.push(chunk);
-          }
-          const raw = Buffer.concat(chunks).toString('utf-8');
-
-          let json;
-          try {
-            json = JSON.parse(raw);
-          } catch (e) {
-            console.error("❌ Error parsing HubSpot JSON:", raw);
-            return reject(new Error('Failed to parse HubSpot list response'));
-          }
-
-          const contacts = json.contacts || [];
-          for (const contact of contacts) {
-            if (contact.vid) contactIds.push(contact.vid);
-          }
-
-          hasMore = json['has-more'];
-          vidOffset = json['vid-offset'];
+        const chunks = [];
+        for await (const chunk of listResp.body) {
+          chunks.push(chunk);
         }
+        const raw = Buffer.concat(chunks).toString('utf-8');
+        const json = JSON.parse(raw);
+        const contactList = json.contacts || [];
 
-        console.log("📥 TOTAL CONTACT IDs:", contactIds);
+        console.log("📥 TOTAL CONTACT IDs:", contactList.map(c => c.vid));
 
-        // Step 2: Fetch full contact details using V3 API
+        // 2. Fetch full contact records (with company associations)
         const leads = [];
 
-        for (const contactId of contactIds) {
+        for (const contact of contactList) {
+          const contactId = contact.vid;
+
+          // a. Fetch full contact data
+          const contactData = await client.crm.contacts.basicApi.getById(contactId.toString(), {
+            properties: ['firstname', 'lastname', 'email', 'phone']
+          });
+
+          const props = contactData.properties || {};
+          const name = `${props.firstname || ''} ${props.lastname || ''}`.trim() || 'Unnamed';
+          const email = props.email || '';
+          const phone = props.phone || '';
+
+          // b. Fetch associated company (if any)
+          let companyName = '';
           try {
-            const contactDetails = await client.crm.contacts.basicApi.getById(
-              contactId,
-              ['firstname', 'lastname', 'email', 'phone'] // ✅ Explicitly request these
-            );
+            const associations = await client.crm.contacts.associationsApi.getAll(contactId.toString(), 'companies');
+            const companyIds = associations.results.map(a => a.id);
 
-            const props = contactDetails?.properties || {};
-            console.log(`📦 Fetched Contact ID ${contactId}:`, props);
+            if (companyIds.length > 0) {
+              const company = await client.crm.companies.basicApi.getById(companyIds[0], {
+                properties: ['name', 'domain']
+              });
 
-            const name = `${props.firstname || ''} ${props.lastname || ''}`.trim() || 'Unnamed';
-            const email = props.email || '';
-            const phone = props.phone || '';
-
-            leads.push({
-              id: contactId,
-              name,
-              email,
-              phone
-            });
-          } catch (err) {
-            console.warn(`⚠️ Failed to fetch contact ID ${contactId}:`, err.message);
+              companyName = company.properties?.name || '';
+            }
+          } catch (e) {
+            console.warn(`⚠️ No company for contact ${contactId}`);
           }
+
+          leads.push({
+            id: contactId,
+            name,
+            email,
+            phone,
+            company: companyName
+          });
         }
 
         console.log("✅ FINAL MAPPED LEADS:", leads);
-        return resolve(leads);
+        resolve(leads);
       } catch (apiErr) {
         console.error("❌ HubSpot API error:", apiErr.message);
-        return reject(apiErr);
+        reject(apiErr);
       }
     });
   });
