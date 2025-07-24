@@ -23,54 +23,81 @@ async function fetchLeads(integrationId, listIdParam) {
         const listId = parseInt(listIdParam);
         if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
 
-        // Step 1: Get all contact IDs from the list
-        const listRes = await client.apiRequest({
-          method: 'GET',
-          path: `/contacts/v1/lists/${listId}/contacts/all`,
-          qs: { count: 100 }
-        });
+        // Step 1: Get contact IDs from list
+        const contactIds = [];
+        let hasMore = true;
+        let vidOffset;
 
-        const chunks = [];
-        for await (const chunk of listRes.body) chunks.push(chunk);
-        const raw = Buffer.concat(chunks).toString('utf-8');
-        const parsed = JSON.parse(raw);
+        while (hasMore) {
+          const qs = { count: 100 };
+          if (vidOffset !== undefined) qs.vidOffset = vidOffset;
 
-        const contactIds = parsed.contacts.map(c => c.vid);
+          const response = await client.apiRequest({
+            method: 'GET',
+            path: `/contacts/v1/lists/${listId}/contacts/all`,
+            qs
+          });
+
+          const chunks = [];
+          for await (const chunk of response.body) {
+            chunks.push(chunk);
+          }
+          const raw = Buffer.concat(chunks).toString('utf-8');
+
+          let json;
+          try {
+            json = JSON.parse(raw);
+          } catch (e) {
+            console.error("❌ Error parsing HubSpot JSON:", raw);
+            return reject(new Error('Failed to parse HubSpot list response'));
+          }
+
+          const contacts = json.contacts || [];
+          for (const contact of contacts) {
+            if (contact.vid) contactIds.push(contact.vid);
+          }
+
+          hasMore = json['has-more'];
+          vidOffset = json['vid-offset'];
+        }
+
         console.log("📥 TOTAL CONTACT IDs:", contactIds);
 
-        // Step 2: Use v3 to fetch full property details for each contact
+        // Step 2: Fetch full contact details using V3 API
         const leads = [];
 
-        for (const id of contactIds) {
+        for (const contactId of contactIds) {
           try {
-            const { body } = await client.apiRequest({
-              method: 'GET',
-              path: `/crm/v3/objects/contacts/${id}`,
-              qs: {
-                properties: ['firstname', 'lastname', 'email', 'phone', 'company']
-              }
-            });
+            const contactDetails = await client.crm.contacts.basicApi.getById(
+              contactId,
+              ['firstname', 'lastname', 'email', 'phone', 'company'] // ✅ Include 'company' field here
+            );
 
-            const props = body.properties || {};
-            console.log(`📦 Fetched Contact ID ${id}:`, props);
+            const props = contactDetails?.properties || {};
+            console.log(`📦 Fetched Contact ID ${contactId}:`, props);
+
+            const name = `${props.firstname || ''} ${props.lastname || ''}`.trim() || 'Unnamed';
+            const email = props.email || '';
+            const phone = props.phone || '';
+            const company = props.company || '';
 
             leads.push({
-              id,
-              name: `${props.firstname || ''} ${props.lastname || ''}`.trim() || 'Unnamed',
-              email: props.email || '',
-              phone: props.phone || '',
-              company: props.company || ''
+              id: contactId,
+              name,
+              email,
+              phone,
+              company // ✅ Include in final result
             });
           } catch (err) {
-            console.error(`❌ Failed to fetch contact ${id}:`, err.message);
+            console.warn(`⚠️ Failed to fetch contact ID ${contactId}:`, err.message);
           }
         }
 
         console.log("✅ FINAL MAPPED LEADS:", leads);
-        resolve(leads);
+        return resolve(leads);
       } catch (apiErr) {
         console.error("❌ HubSpot API error:", apiErr.message);
-        reject(apiErr);
+        return reject(apiErr);
       }
     });
   });
