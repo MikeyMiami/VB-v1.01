@@ -20,7 +20,7 @@ async function fetchLeads(integrationId, listId) {
           let results;
           try {
             if (listId) {
-              // Fetch contacts from a specific list x
+              // Fetch contacts from a specific list
               const membershipsApi = client.crm.lists.membershipsApi;
               const listResponse = await membershipsApi.getPage(
                 listId,
@@ -44,7 +44,8 @@ async function fetchLeads(integrationId, listId) {
             }
             resolve(results);
           } catch (apiErr) {
-            console.error('HubSpot API Error:', apiErr.message, 'Correlation ID:', apiErr.body?.correlationId);
+            console.error("HubSpot API Error:", apiErr.message);
+            console.error("Full Error:", JSON.stringify(apiErr, null, 2)); // Log full stack/error
             reject(apiErr);
           }
           break;
