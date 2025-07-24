@@ -23,70 +23,77 @@ async function fetchLeads(integrationId, listIdParam) {
         const listId = parseInt(listIdParam);
         if (isNaN(listId)) return reject(new Error('Invalid HubSpot list ID'));
 
-        // 1. Fetch contacts from the list
-        const listResp = await client.apiRequest({
-          method: 'GET',
-          path: `/contacts/v1/lists/${listId}/contacts/all`,
-          qs: { count: 100 }
-        });
+        let allContacts = [];
+        let hasMore = true;
+        let vidOffset;
 
-        const chunks = [];
-        for await (const chunk of listResp.body) {
-          chunks.push(chunk);
-        }
-        const raw = Buffer.concat(chunks).toString('utf-8');
-        const json = JSON.parse(raw);
-        const contactList = json.contacts || [];
+        while (hasMore) {
+          const qs = { count: 100 };
+          if (vidOffset !== undefined) qs.vidOffset = vidOffset;
 
-        console.log("📥 TOTAL CONTACT IDs:", contactList.map(c => c.vid));
-
-        // 2. Fetch full contact records (with company associations)
-        const leads = [];
-
-        for (const contact of contactList) {
-          const contactId = contact.vid;
-
-          // a. Fetch full contact data
-          const contactData = await client.crm.contacts.basicApi.getById(contactId.toString(), {
-            properties: ['firstname', 'lastname', 'email', 'phone']
+          const response = await client.apiRequest({
+            method: 'GET',
+            path: `/contacts/v1/lists/${listId}/contacts/all`,
+            qs
           });
 
-          const props = contactData.properties || {};
-          const name = `${props.firstname || ''} ${props.lastname || ''}`.trim() || 'Unnamed';
-          const email = props.email || '';
-          const phone = props.phone || '';
+          const chunks = [];
+          for await (const chunk of response.body) {
+            chunks.push(chunk);
+          }
+          const raw = Buffer.concat(chunks).toString('utf-8');
 
-          // b. Fetch associated company (if any)
-          let companyName = '';
+          let json;
           try {
-            const associations = await client.crm.contacts.associationsApi.getAll(contactId.toString(), 'companies');
-            const companyIds = associations.results.map(a => a.id);
-
-            if (companyIds.length > 0) {
-              const company = await client.crm.companies.basicApi.getById(companyIds[0], {
-                properties: ['name', 'domain']
-              });
-
-              companyName = company.properties?.name || '';
-            }
+            json = JSON.parse(raw);
           } catch (e) {
-            console.warn(`⚠️ No company for contact ${contactId}`);
+            console.error("❌ Error parsing HubSpot JSON:", raw);
+            return reject(new Error('Failed to parse HubSpot list response'));
           }
 
-          leads.push({
-            id: contactId,
+          const contacts = json.contacts || [];
+          allContacts.push(...contacts);
+
+          hasMore = json['has-more'];
+          vidOffset = json['vid-offset'];
+        }
+
+        console.log("📥 TOTAL CONTACTS:", allContacts.length);
+
+        const leads = allContacts.map(contact => {
+          const vid = contact.vid;
+
+          const identityProfile = contact['identity-profiles']?.[0];
+          const emailIdentity = identityProfile?.identities?.find(i => i.type === 'EMAIL');
+          const email = emailIdentity?.value || '';
+
+          const firstName = contact.properties?.firstname?.value || '';
+          const lastName = contact.properties?.lastname?.value || '';
+          const name = `${firstName} ${lastName}`.trim() || 'Unnamed';
+
+          const phone =
+            contact.properties?.phone?.value ||
+            contact.properties?.mobilephone?.value ||
+            contact.properties?.phone_number?.value ||
+            contact.properties?.hs_phone_number?.value ||
+            '';
+
+          const company = contact.properties?.company?.value || '';
+
+          return {
+            id: vid,
             name,
             email,
             phone,
-            company: companyName
-          });
-        }
+            company
+          };
+        });
 
         console.log("✅ FINAL MAPPED LEADS:", leads);
-        resolve(leads);
+        return resolve(leads);
       } catch (apiErr) {
         console.error("❌ HubSpot API error:", apiErr.message);
-        reject(apiErr);
+        return reject(apiErr);
       }
     });
   });
