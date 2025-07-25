@@ -27,7 +27,8 @@
     "jsonwebtoken": "^9.0.2",
     "bcryptjs": "^2.4.3",
     "sqlite3": "^5.1.7",
-    "bullmq": "^5.10.2"
+    "bullmq": "^5.10.2",
+    "google-spreadsheet": "3.3.0",
   }
 }
 
