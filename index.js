@@ -145,6 +145,8 @@ app.use('/playback', require('./routes/playback'));
 app.use('/realtime', require('./routes/realtime'));
 app.use('/agents', require('./routes/agents')); // Updated: No authMiddleware here; it's now selective in agents.js
 app.use('/integrations', authMiddleware, require('./routes/integrations'));
+app.use('/post-call-summary', require('./routes/post-call-summary'));
+
 
 // ✅ Debug route
 app.get('/debug-route', (req, res) => {
