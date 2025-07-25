@@ -1,8 +1,16 @@
+// utils/hubspot.js
+
 const axios = require('axios');
 
+/**
+ * Creates a note in HubSpot and associates it with a contact.
+ * @param {string} apiKey - The private app token (bearer token).
+ * @param {string} contactId - The HubSpot contact ID to associate the note with.
+ * @param {string} noteContent - The content of the note.
+ */
 async function postNoteToHubSpot(apiKey, contactId, noteContent) {
   try {
-    // 1. Create the note
+    // Step 1: Create the note object
     const noteResponse = await axios.post(
       'https://api.hubapi.com/crm/v3/objects/notes',
       {
@@ -20,7 +28,7 @@ async function postNoteToHubSpot(apiKey, contactId, noteContent) {
 
     const noteId = noteResponse.data.id;
 
-    // 2. Associate the note with the contact
+    // Step 2: Associate the note to the contact
     await axios.put(
       `https://api.hubapi.com/crm/v3/objects/notes/${noteId}/associations/contacts/${contactId}/note_to_contact`,
       {},
@@ -32,7 +40,7 @@ async function postNoteToHubSpot(apiKey, contactId, noteContent) {
       }
     );
 
-    console.log('✅ Note created and associated successfully.');
+    console.log('✅ Note successfully created and associated with contact ID:', contactId);
   } catch (err) {
     console.error('❌ Failed to create or associate note in HubSpot:', {
       status: err.response?.status,
@@ -42,7 +50,5 @@ async function postNoteToHubSpot(apiKey, contactId, noteContent) {
     throw err;
   }
 }
-
-module.exports = { postNoteToHubSpot };
 
 module.exports = { postNoteToHubSpot };
