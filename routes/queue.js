@@ -1,64 +1,92 @@
-// VB-v1.01-main/routes/queue.js
+// routes/queue.js
 const express = require('express');
 const router = express.Router();
-const { Queue } = require('bullmq');
 const db = require('../db');
-const fetchLeads = require('../utils/integrations');
-const { getLeadsFromGoogleSheets } = require('../utils/googleSheets');
+const { Queue } = require('bullmq');
+const { fetchLeads } = require('../utils/integrations');
+const { fetchGoogleSheetLeads } = require('../utils/googleSheets');
 
-const callQueue = new Queue('callQueue', {
+const callQueue = new Queue('call-queue', {
   connection: {
-    host: process.env.REDIS_HOST || '127.0.0.1',
-    port: process.env.REDIS_PORT || 6379,
-  },
+    host: process.env.REDIS_HOST || 'localhost',
+    port: process.env.REDIS_PORT || 6379
+  }
 });
+
+let queueState = {
+  isPaused: false,
+  currentJobIndex: 0,
+  jobs: [],
+  agentId: null,
+  source: null,
+};
 
 // POST /queue/start
 router.post('/start', async (req, res) => {
-  const { agentId, source } = req.body;
-
-  if (!agentId || !source) {
-    return res.status(400).json({ success: false, error: 'agentId and source are required' });
-  }
-
   try {
-    db.get('SELECT * FROM Agents WHERE id = ?', [agentId], async (err, agent) => {
-      if (err || !agent) {
-        return res.status(404).json({ success: false, error: 'Agent not found' });
-      }
+    const { agentId, source, listId } = req.body;
 
-      let leads = [];
+    if (!agentId || !source) {
+      return res.status(400).json({ success: false, message: 'agentId and source are required.' });
+    }
 
-      if (source === 'google_sheets') {
-        leads = await getLeadsFromGoogleSheets();
-      } else if (source === 'hubspot') {
-        leads = await fetchLeads(agent.integrationId);
-      } else {
-        return res.status(400).json({ success: false, error: 'Invalid source' });
-      }
-
-      const filteredLeads = leads.filter(l => l.phone); // Only enqueue leads with phone
-
-      for (let i = 0; i < filteredLeads.length; i++) {
-        const lead = filteredLeads[i];
-
-        await callQueue.add(`call-${agentId}-${i}`, {
-          agentId,
-          lead,
-          position: i + 1,
-          total: filteredLeads.length,
-          agentAttributes: agent,
-        });
-      }
-
-      res.json({
-        success: true,
-        message: `Queue started with ${filteredLeads.length} leads from ${source}.`,
+    // Fetch agent attributes
+    const agent = await new Promise((resolve, reject) => {
+      db.get('SELECT * FROM Agents WHERE id = ?', [agentId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
       });
     });
+
+    if (!agent) {
+      return res.status(404).json({ success: false, message: 'Agent not found.' });
+    }
+
+    let leads = [];
+
+    if (source === 'google_sheets') {
+      leads = await fetchGoogleSheetLeads();
+    } else if (source === 'hubspot') {
+      leads = await fetchLeads(agent.integrationId, listId);
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid source provided.' });
+    }
+
+    if (!leads.length) {
+      return res.json({ success: true, message: 'No leads found with phone numbers.' });
+    }
+
+    // Clear existing queue and populate new one
+    await callQueue.drain();
+    queueState.jobs = [];
+    queueState.currentJobIndex = 0;
+    queueState.agentId = agentId;
+    queueState.source = source;
+    queueState.isPaused = false;
+
+    for (let i = 0; i < leads.length; i++) {
+      const lead = leads[i];
+      const jobData = {
+        agentId,
+        agentAttributes: agent,
+        lead,
+        position: i + 1,
+        total: leads.length,
+      };
+
+      await callQueue.add('call-lead', jobData);
+      queueState.jobs.push(jobData);
+    }
+
+    res.json({
+      success: true,
+      message: `Queued ${leads.length} leads for calling.`,
+      leadsQueued: leads.length
+    });
+
   } catch (err) {
-    console.error('❌ Failed to start queue:', err);
-    res.status(500).json({ success: false, error: err.message });
+    console.error('❌ Failed to start bot queue:', err);
+    res.status(500).json({ success: false, message: 'Server error while starting queue.', error: err.message });
   }
 });
 
@@ -66,10 +94,11 @@ router.post('/start', async (req, res) => {
 router.post('/pause', async (req, res) => {
   try {
     await callQueue.pause();
-    res.json({ success: true, message: 'Queue paused successfully.' });
-  } catch (error) {
-    console.error('❌ Failed to pause queue:', error);
-    res.status(500).json({ success: false, error: error.message });
+    queueState.isPaused = true;
+    res.json({ success: true, message: 'Bot queue paused.' });
+  } catch (err) {
+    console.error('❌ Failed to pause queue:', err);
+    res.status(500).json({ success: false, message: 'Server error while pausing queue.', error: err.message });
   }
 });
 
@@ -77,28 +106,29 @@ router.post('/pause', async (req, res) => {
 router.post('/resume', async (req, res) => {
   try {
     await callQueue.resume();
-    res.json({ success: true, message: 'Queue resumed successfully.' });
-  } catch (error) {
-    console.error('❌ Failed to resume queue:', error);
-    res.status(500).json({ success: false, error: error.message });
+    queueState.isPaused = false;
+    res.json({ success: true, message: 'Bot queue resumed.' });
+  } catch (err) {
+    console.error('❌ Failed to resume queue:', err);
+    res.status(500).json({ success: false, message: 'Server error while resuming queue.', error: err.message });
   }
 });
 
 // POST /queue/stop
 router.post('/stop', async (req, res) => {
   try {
-    await callQueue.drain(); // Clear waiting jobs
-    await callQueue.clean(0, 1000, 'delayed');
-    await callQueue.clean(0, 1000, 'wait');
-    await callQueue.clean(0, 1000, 'active');
-    await callQueue.clean(0, 1000, 'completed');
-    await callQueue.clean(0, 1000, 'failed');
-    res.json({ success: true, message: 'Queue stopped and cleared.' });
-  } catch (error) {
-    console.error('❌ Failed to stop queue:', error);
-    res.status(500).json({ success: false, error: error.message });
+    await callQueue.drain();
+    queueState.jobs = [];
+    queueState.currentJobIndex = 0;
+    queueState.isPaused = false;
+    queueState.agentId = null;
+    queueState.source = null;
+
+    res.json({ success: true, message: 'Bot queue stopped and cleared.' });
+  } catch (err) {
+    console.error('❌ Failed to stop queue:', err);
+    res.status(500).json({ success: false, message: 'Server error while stopping queue.', error: err.message });
   }
 });
 
 module.exports = router;
-
