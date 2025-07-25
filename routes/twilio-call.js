@@ -76,7 +76,10 @@ router.post('/status', async (req, res) => {
   const { CallStatus, botId, contactId, to } = req.body;
 
   db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], async (err, agent) => {
-    if (err || !agent) return res.sendStatus(200);
+    if (err || !agent) {
+      console.warn(`⚠️ Agent not found for ID: ${botId}`);
+      return res.sendStatus(200);
+    }
 
     if (CallStatus === 'no-answer' && agent.double_dial_no_answer) {
       const callQueue = new Queue('calls', { connection: redisConnection });
@@ -84,14 +87,19 @@ router.post('/status', async (req, res) => {
     }
 
     // 🗒️ Add post-call note to HubSpot
-    if (CallStatus === 'completed' && contactId) {
+    if (CallStatus === 'completed') {
       const timestamp = new Date().toLocaleString();
       const note = `📞 Call completed at ${timestamp}`;
-      try {
-        await createNoteForContact(agent.integration_id, contactId, note);
-        console.log(`✅ Note logged for contact ${contactId}`);
-      } catch (err) {
-        console.warn(`⚠️ Failed to log note for ${contactId}:`, err.message);
+
+      if (contactId && agent.integration_id) {
+        try {
+          await createNoteForContact(agent.integration_id, contactId, note);
+          console.log(`✅ Note logged for contact ${contactId}`);
+        } catch (err) {
+          console.warn(`⚠️ Failed to log note for ${contactId}:`, err.message);
+        }
+      } else {
+        console.warn('⚠️ Skipped note creation — missing contactId or integration_id.');
       }
     }
 
