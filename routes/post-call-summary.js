@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { handlePostCallSummary } = require('../services/postCallSummary');
+const handlePostCallSummary = require('../services/post-call-summary');
 
 router.post('/', async (req, res) => {
   try {
