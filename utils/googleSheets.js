@@ -1,11 +1,11 @@
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 
 async function getSheetClient() {
-  const credentials = JSON.parse(
-    Buffer.from(process.env.GOOGLE_CREDENTIALS_BASE64, 'base64').toString('utf8')
-  );
   const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID);
-  await doc.useServiceAccountAuth(credentials);
+  await doc.useServiceAccountAuth({
+    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    private_key: Buffer.from(process.env.GOOGLE_PRIVATE_KEY_BASE64, 'base64').toString('utf-8'),
+  });
   await doc.loadInfo();
   return doc;
 }
@@ -16,12 +16,12 @@ async function fetchGoogleSheetLeads() {
   const rows = await sheet.getRows();
 
   return rows
-    .filter(row => row.Status === 'Not Called' && row.Phone)
+    .filter(row => row.Phone) // Only require Phone to be present
     .map((row, index) => ({
-      name: row.Name,
-      phone: row.Phone,
-      email: row.Email,
-      company: row.Company,
+      name: row.Name || '',
+      phone: row.Phone || '',
+      email: row.Email || '',
+      company: row.Company || '',
       rowIndex: index,
     }));
 }
@@ -44,5 +44,5 @@ async function writeCallResultToSheet(rowIndex, result) {
 module.exports = {
   fetchGoogleSheetLeads,
   writeCallResultToSheet,
-  getLeadsFromGoogleSheets: fetchGoogleSheetLeads, // alias for compatibility
+  getLeadsFromGoogleSheets: fetchGoogleSheetLeads // alias for compatibility
 };
