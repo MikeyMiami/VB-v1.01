@@ -1,43 +1,38 @@
+// VB-v1.01-main/utils/googleSheets.js
 const { GoogleSpreadsheet } = require('google-spreadsheet');
-const { Buffer } = require('buffer');
 
-// Decode the base64 service account JSON string from .env
 function getSheetClient() {
-  const credsBase64 = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64;
-  if (!credsBase64) throw new Error("GOOGLE_SERVICE_ACCOUNT_BASE64 is not defined");
+  const base64Credentials = process.env.GOOGLE_CREDENTIALS_BASE64;
+  if (!base64Credentials) {
+    throw new Error('GOOGLE_CREDENTIALS_BASE64 is not defined');
+  }
 
-  const decoded = Buffer.from(credsBase64, 'base64').toString('utf8');
-  const creds = JSON.parse(decoded);
-
-  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID);
-  return { doc, creds };
+  const decoded = Buffer.from(base64Credentials, 'base64').toString('utf8');
+  return JSON.parse(decoded);
 }
 
 async function fetchGoogleSheetLeads() {
-  try {
-    const { doc, creds } = getSheetClient();
-    await doc.useServiceAccountAuth(creds);
-    await doc.loadInfo();
+  const creds = getSheetClient();
 
-    const sheet = doc.sheetsByIndex[0];
-    await sheet.loadHeaderRow();
+  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID);
+  await doc.useServiceAccountAuth(creds);
+  await doc.loadInfo();
 
-    const rows = await sheet.getRows();
-    const leads = rows
-      .map(row => {
-        const data = {};
-        for (const header of sheet.headerValues) {
-          data[header] = row[header] || "";
-        }
-        return data;
-      })
-      .filter(lead => lead["Phone"] && lead["Phone"].trim() !== "");
+  const sheet = doc.sheetsByIndex[0];
+  const rows = await sheet.getRows();
 
-    return leads;
-  } catch (err) {
-    console.error("❌ Failed to fetch leads from Google Sheets:", err);
-    throw err;
-  }
+  // Filter rows to only include those with a phone number
+  const leads = rows
+    .filter((row) => row.Phone || row.phone || row['Phone Number'] || row['phone number'])
+    .map((row) => {
+      const obj = {};
+      sheet.headerValues.forEach((header) => {
+        obj[header] = row[header] || '';
+      });
+      return obj;
+    });
+
+  return leads;
 }
 
 module.exports = {
