@@ -19,6 +19,8 @@ const jwt = require('jsonwebtoken');
 const twilio = require('twilio');
 const db = require('./db'); // SQLite DB
 const { fetchLeads, bookAppointment } = require('./utils/integrations');
+const sheetsRoutes = require('./routes/sheets');
+
 
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 
