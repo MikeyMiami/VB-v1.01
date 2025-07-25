@@ -10,12 +10,15 @@ const axios = require('axios');
  */
 async function postNoteToHubSpot(apiKey, contactId, noteContent) {
   try {
+    const currentTimestamp = new Date().getTime(); // Milliseconds since epoch
+
     // Step 1: Create the note object
     const noteResponse = await axios.post(
       'https://api.hubapi.com/crm/v3/objects/notes',
       {
         properties: {
           hs_note_body: noteContent,
+          hs_timestamp: currentTimestamp
         }
       },
       {
