@@ -1,14 +1,13 @@
-// VB-v1.01-main/utils/googleSheets.js
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 
 async function getSheetClient() {
-  const creds = {
+  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID);
+
+  await doc.useServiceAccountAuth({
     client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
     private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-  };
+  });
 
-  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID);
-  await doc.useServiceAccountAuth(creds);
   await doc.loadInfo();
   return doc;
 }
