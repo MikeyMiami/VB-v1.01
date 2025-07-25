@@ -1,11 +1,11 @@
 // VB-v1.01-main/routes/twilio-call.js
-// twilio-call.js (Updated: Added statusCallback for dynamic handling)
 const express = require('express');
 const router = express.Router();
 const twilio = require('twilio');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
 const db = require('../db');
 const { Queue } = require('bullmq');
+const { createNoteForContact } = require('../utils/hubspot');
 
 const redisConnection = {
   host: process.env.REDIS_HOST || 'localhost',
@@ -48,45 +48,63 @@ router.post('/start', async (req, res) => {
 router.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
   const botId = req.query.botId;
+
   db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, agent) => {
     if (err || !agent) {
       twiml.say('Hello, this is the AI agent. Please speak your question.');
     } else {
       twiml.say(agent.prompt_script ? agent.prompt_script.substring(0, 100) : 'Hello, this is the AI agent. Please speak your question.');
     }
-    const wsUrl = PUBLIC_URL.replace('https://', 'wss://') + `/ws?botId=${botId}`; // Use wss for WebSocket
-    twiml.connect().stream({ url: wsUrl, statusCallback: `${PUBLIC_URL}/twilio-call/status`, statusCallbackMethod: 'POST' });
-    twiml.pause({ length: 120 }); // Keeps call open for 120 seconds; increased for longer responses
+
+    const wsUrl = PUBLIC_URL.replace('https://', 'wss://') + `/ws?botId=${botId}`;
+    twiml.connect().stream({
+      url: wsUrl,
+      statusCallback: `${PUBLIC_URL}/twilio-call/status`,
+      statusCallbackMethod: 'POST'
+    });
+
+    twiml.pause({ length: 120 }); // 2 min session
     res.type('text/xml');
     res.send(twiml.toString());
   });
 });
 
-// Status callback route to handle events
-router.post('/status', (req, res) => {
-  console.log('Call status update:', JSON.stringify(req.body)); // Log full body for debug
+// 📲 Call status update (used to trigger follow-up)
+router.post('/status', async (req, res) => {
+  console.log('Call status update:', JSON.stringify(req.body));
+
   const { CallStatus, botId, contactId, to } = req.body;
 
   db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], async (err, agent) => {
     if (err || !agent) return res.sendStatus(200);
 
     if (CallStatus === 'no-answer' && agent.double_dial_no_answer) {
-      // Re-queue
       const callQueue = new Queue('calls', { connection: redisConnection });
       await callQueue.add('dial', { botId, phone: to, contactId });
     }
 
-    // Log call
-    db.run(`INSERT INTO CallLogs (botId, call_date, call_duration, call_outcome, contact_phone) VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?)`,
+    // 🗒️ Add post-call note to HubSpot
+    if (CallStatus === 'completed' && contactId) {
+      const timestamp = new Date().toLocaleString();
+      const note = `📞 Call completed at ${timestamp}`;
+      try {
+        await createNoteForContact(agent.integration_id, contactId, note);
+        console.log(`✅ Note logged for contact ${contactId}`);
+      } catch (err) {
+        console.warn(`⚠️ Failed to log note for ${contactId}:`, err.message);
+      }
+    }
+
+    db.run(
+      `INSERT INTO CallLogs (botId, call_date, call_duration, call_outcome, contact_phone)
+       VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?)`,
       [botId, req.body.CallDuration || 0, CallStatus, to],
       (err) => {
         if (err) console.error('Log error:', err);
       }
     );
 
-    // Optional: Sync to Bubble via axios.post to Bubble Data API
-
-    res.sendStatus(200); // Acknowledge
+    res.sendStatus(200);
   });
 });
 
