@@ -1,19 +1,11 @@
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 
 async function getSheetClient() {
+  const credentials = JSON.parse(
+    Buffer.from(process.env.GOOGLE_CREDENTIALS_BASE64, 'base64').toString('utf8')
+  );
   const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID);
-
-  // Decode private key safely from environment variable
-  let decodedPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
-  if (decodedPrivateKey.includes('\\n')) {
-    decodedPrivateKey = decodedPrivateKey.replace(/\\n/g, '\n');
-  }
-
-  await doc.useServiceAccountAuth({
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    private_key: decodedPrivateKey,
-  });
-
+  await doc.useServiceAccountAuth(credentials);
   await doc.loadInfo();
   return doc;
 }
@@ -52,5 +44,5 @@ async function writeCallResultToSheet(rowIndex, result) {
 module.exports = {
   fetchGoogleSheetLeads,
   writeCallResultToSheet,
-  getLeadsFromGoogleSheets: fetchGoogleSheetLeads // alias for compatibility
+  getLeadsFromGoogleSheets: fetchGoogleSheetLeads, // alias for compatibility
 };
