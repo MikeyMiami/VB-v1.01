@@ -1,28 +1,44 @@
 // VB-v1.01-main/utils/hubspot.js
-const hubspot = require('@hubspot/api-client');
+const axios = require('axios');
 
-async function postNoteToHubSpot(apiKey, contactId, content) {
+async function postNoteToHubSpot(apiKey, contactId, noteBody) {
   try {
-    const client = new hubspot.Client({ accessToken: apiKey });
-
-    const engagementNote = {
-      properties: {
-        hs_timestamp: new Date().toISOString(),
-        hs_note_body: content,
-        hs_engagement_type: 'NOTE'
+    const response = await axios.post(
+      'https://api.hubapi.com/crm/v3/objects/notes',
+      {
+        properties: {
+          hs_timestamp: new Date().toISOString(),
+          hs_note_body: noteBody,
+        },
+        associations: [
+          {
+            to: { id: contactId },
+            types: [
+              {
+                associationCategory: 'HUBSPOT_DEFINED',
+                associationTypeId: 3, // Contact association
+              }
+            ]
+          }
+        ]
       },
-      associations: [
-        {
-          to: { id: contactId },
-          types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 1 }]
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
         }
-      ]
-    };
+      }
+    );
 
-    const response = await client.crm.objects.notes.basicApi.create({ properties: engagementNote.properties, associations: engagementNote.associations });
-    console.log('📝 Note created in HubSpot:', response.id);
-  } catch (err) {
-    console.error('❌ Failed to create note in HubSpot:', err.message);
+    console.log('✅ Note successfully created in HubSpot');
+    return response.data;
+  } catch (error) {
+    console.error('❌ Failed to create note in HubSpot:', {
+      status: error.response?.status,
+      message: error.message,
+      body: error.response?.data
+    });
+    throw error;
   }
 }
 
