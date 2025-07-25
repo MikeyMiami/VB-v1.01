@@ -1,10 +1,8 @@
 // routes/post-call-summary.js
-
 const express = require('express');
 const router = express.Router();
-const { handlePostCallSummary } = require('../services/post-call-summary');
+const postCallSummary = require('../services/post-call-summary'); // ✅ make sure this is correct
 
-// POST /post-call-summary
-router.post('/', handlePostCallSummary);
+router.post('/', postCallSummary);
 
 module.exports = router;
