@@ -1,81 +1,104 @@
 // VB-v1.01-main/routes/queue.js
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
 const { Queue } = require('bullmq');
-const { fetchLeadsFromGoogleSheets } = require('../utils/googleSheets');
-const { fetchLeadsFromHubspot } = require('../utils/hubspot'); // placeholder for future
-const redisConnection = {
-  host: process.env.REDIS_HOST,
-  port: process.env.REDIS_PORT
-};
-const callQueue = new Queue('callQueue', { connection: redisConnection });
+const db = require('../db');
+const fetchLeads = require('../utils/integrations');
+const { getLeadsFromGoogleSheets } = require('../utils/googleSheets');
+
+const callQueue = new Queue('callQueue', {
+  connection: {
+    host: process.env.REDIS_HOST || '127.0.0.1',
+    port: process.env.REDIS_PORT || 6379,
+  },
+});
 
 // POST /queue/start
 router.post('/start', async (req, res) => {
   const { agentId, source } = req.body;
 
   if (!agentId || !source) {
-    return res.status(400).json({ success: false, error: 'Missing agentId or source' });
+    return res.status(400).json({ success: false, error: 'agentId and source are required' });
   }
 
   try {
-    // 1. Get agent settings
-    const agent = await new Promise((resolve, reject) => {
-      db.get(`SELECT * FROM Agents WHERE id = ?`, [agentId], (err, row) => {
-        if (err) return reject(err);
-        resolve(row);
+    db.get('SELECT * FROM Agents WHERE id = ?', [agentId], async (err, agent) => {
+      if (err || !agent) {
+        return res.status(404).json({ success: false, error: 'Agent not found' });
+      }
+
+      let leads = [];
+
+      if (source === 'google_sheets') {
+        leads = await getLeadsFromGoogleSheets();
+      } else if (source === 'hubspot') {
+        leads = await fetchLeads(agent.integrationId);
+      } else {
+        return res.status(400).json({ success: false, error: 'Invalid source' });
+      }
+
+      const filteredLeads = leads.filter(l => l.phone); // Only enqueue leads with phone
+
+      for (let i = 0; i < filteredLeads.length; i++) {
+        const lead = filteredLeads[i];
+
+        await callQueue.add(`call-${agentId}-${i}`, {
+          agentId,
+          lead,
+          position: i + 1,
+          total: filteredLeads.length,
+          agentAttributes: agent,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: `Queue started with ${filteredLeads.length} leads from ${source}.`,
       });
     });
+  } catch (err) {
+    console.error('❌ Failed to start queue:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-    if (!agent) {
-      return res.status(404).json({ success: false, error: 'Agent not found' });
-    }
-
-    // 2. Get leads from the chosen source
-    let leads = [];
-    if (source === 'google_sheets') {
-      leads = await fetchLeadsFromGoogleSheets(agent.integrationId);
-    } else if (source === 'hubspot') {
-      leads = await fetchLeadsFromHubspot(agent.integrationId); // You can implement this
-    } else {
-      return res.status(400).json({ success: false, error: 'Unsupported lead source' });
-    }
-
-    // 3. Filter leads with phone numbers
-    const filteredLeads = leads.filter(lead => !!lead.phone);
-
-    // 4. Queue each lead
-    for (let i = 0; i < filteredLeads.length; i++) {
-      const lead = filteredLeads[i];
-      await callQueue.add('call', {
-        agentId,
-        lead,
-        position: i + 1,
-        total: filteredLeads.length,
-        config: {
-          prompt_script: agent.prompt_script,
-          dial_limit: agent.dial_limit,
-          max_calls_per_contact: agent.max_calls_per_contact,
-          call_time_start: agent.call_time_start,
-          call_time_end: agent.call_time_end,
-          call_days: JSON.parse(agent.call_days || '[]'),
-          double_dial_no_answer: !!agent.double_dial_no_answer,
-          voice_id: agent.voice_id
-        }
-      });
-    }
-
-    res.json({
-      success: true,
-      message: `Enqueued ${filteredLeads.length} leads for calling.`,
-      totalLeads: filteredLeads.length
-    });
-
+// POST /queue/pause
+router.post('/pause', async (req, res) => {
+  try {
+    await callQueue.pause();
+    res.json({ success: true, message: 'Queue paused successfully.' });
   } catch (error) {
-    console.error('❌ Failed to start queue:', error);
+    console.error('❌ Failed to pause queue:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /queue/resume
+router.post('/resume', async (req, res) => {
+  try {
+    await callQueue.resume();
+    res.json({ success: true, message: 'Queue resumed successfully.' });
+  } catch (error) {
+    console.error('❌ Failed to resume queue:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /queue/stop
+router.post('/stop', async (req, res) => {
+  try {
+    await callQueue.drain(); // Clear waiting jobs
+    await callQueue.clean(0, 1000, 'delayed');
+    await callQueue.clean(0, 1000, 'wait');
+    await callQueue.clean(0, 1000, 'active');
+    await callQueue.clean(0, 1000, 'completed');
+    await callQueue.clean(0, 1000, 'failed');
+    res.json({ success: true, message: 'Queue stopped and cleared.' });
+  } catch (error) {
+    console.error('❌ Failed to stop queue:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 module.exports = router;
+
