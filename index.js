@@ -147,6 +147,7 @@ app.use('/agents', require('./routes/agents')); // Updated: No authMiddleware he
 app.use('/integrations', authMiddleware, require('./routes/integrations'));
 app.use('/post-call-summary', require('./routes/post-call-summary'));
 app.use('/notes', require('./routes/notes'));
+app.use('/sheets', sheetsRoutes);
 
 
 
