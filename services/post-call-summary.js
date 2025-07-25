@@ -1,38 +1,54 @@
-// VB-v1.01-main/services/postCallSummary.js
-const { postNoteToHubSpot } = require('../utils/hubspot');
-const { postNoteToGoogleSheets } = require('../utils/googleSheets');
 const db = require('../db');
+const { createNoteForContact } = require('../utils/hubspot');
+const { writeCallResultToSheet } = require('../utils/googleSheets');
 
-function formatSummary({ callTime, duration, outcome, aiSummary }) {
-  return `📝 **Call Summary**
+async function handlePostCallSummary({ botId, contactId, summary, callTime, duration, outcome }) {
+  if (!botId || !summary) {
+    throw new Error('Missing botId or summary.');
+  }
+
+  // Get agent & integration info
+  return new Promise((resolve, reject) => {
+    db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], async (err, agent) => {
+      if (err || !agent) return reject(err || new Error('Agent not found'));
+
+      db.get(`SELECT * FROM Integrations WHERE id = ?`, [agent.integrationId], async (err, integration) => {
+        if (err || !integration) return reject(err || new Error('Integration not found'));
+
+        const note = `📝 **Call Summary**
 - Call Time: ${callTime}
 - Duration: ${duration}
 - Outcome: ${outcome}
-- AI Summary: ${aiSummary}`;
-}
+- AI Summary: ${summary}`;
 
-async function postCallSummary({ agentId, contactId, callTime, duration, outcome, aiSummary }) {
-  return new Promise((resolve, reject) => {
-    db.get(`SELECT * FROM Integrations WHERE userId = ?`, [agentId], async (err, integration) => {
-      if (err || !integration) return reject(err || new Error('Integration not found'));
+        if (integration.integration_type === 'hubspot') {
+          if (contactId) {
+            await createNoteForContact(contactId, note);
+            console.log('✅ Note logged to HubSpot.');
+          } else {
+            console.warn('⚠️ No contactId for HubSpot note.');
+          }
+        } else if (integration.integration_type === 'google_sheets') {
+          if (contactId && contactId.startsWith('GSheetRow')) {
+            const rowIndex = parseInt(contactId.replace('GSheetRow', ''), 10);
+            await writeCallResultToSheet(rowIndex, {
+              status: outcome,
+              summary
+            });
+            console.log('✅ Note logged to Google Sheets.');
+          } else {
+            console.warn('⚠️ No contactId for Google Sheets or format mismatch.');
+          }
+        } else {
+          console.warn('⚠️ Unknown integration type.');
+        }
 
-      const creds = JSON.parse(integration.creds || '{}');
-      const noteContent = formatSummary({ callTime, duration, outcome, aiSummary });
-
-      switch (integration.integration_type) {
-        case 'hubspot':
-          await postNoteToHubSpot(integration.api_key, contactId, noteContent);
-          break;
-        case 'google_sheets':
-          await postNoteToGoogleSheets(creds, contactId, noteContent);
-          break;
-        default:
-          console.warn('⚠️ Unknown integration type');
-      }
-
-      resolve();
+        resolve();
+      });
     });
   });
 }
 
-module.exports = { postCallSummary };
+module.exports = {
+  handlePostCallSummary,
+};
