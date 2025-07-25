@@ -1,42 +1,47 @@
-// VB-v1.01-main/utils/googleSheets.js
-
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 
-/**
- * Posts a call summary note to a specified Google Sheet row.
- * 
- * @param {Object} sheetConfig - Configuration object for the Google Sheet
- * @param {string} sheetConfig.sheet_id - The ID of the Google Sheet
- * @param {string} sheetConfig.client_email - Service account email
- * @param {string} sheetConfig.private_key - Service account private key
- * @param {string} leadId - Row number or identifier for the lead
- * @param {string} note - The call summary or note content
- */
-async function postNoteToGoogleSheets(sheetConfig, leadId, note) {
-  try {
-    const doc = new GoogleSpreadsheet(sheetConfig.sheet_id);
-    await doc.useServiceAccountAuth({
-      client_email: sheetConfig.client_email,
-      private_key: sheetConfig.private_key.replace(/\\n/g, '\n'),
-    });
-    await doc.loadInfo();
-
-    const sheet = doc.sheetsByIndex[0];
-    await sheet.loadCells(); // Optional: only needed if accessing cells
-
-    const rows = await sheet.getRows();
-    const targetRow = rows.find(r => r.ID?.toString() === leadId.toString());
-
-    if (targetRow) {
-      targetRow.Note = note;
-      await targetRow.save();
-      console.log(`✅ Note added to Google Sheets row for lead ID ${leadId}`);
-    } else {
-      console.warn(`⚠️ Lead ID ${leadId} not found in sheet`);
-    }
-  } catch (error) {
-    console.error('❌ Error posting note to Google Sheets:', error.message);
-  }
+async function getSheetClient() {
+  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID);
+  await doc.useServiceAccountAuth({
+    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  });
+  await doc.loadInfo();
+  return doc;
 }
 
-module.exports = { postNoteToGoogleSheets };
+async function fetchGoogleSheetLeads() {
+  const doc = await getSheetClient();
+  const sheet = doc.sheetsByIndex[0];
+  const rows = await sheet.getRows();
+
+  return rows
+    .filter(row => row.Status === 'Not Called' && row.Phone)
+    .map((row, index) => ({
+      name: row.Name,
+      phone: row.Phone,
+      email: row.Email,
+      company: row.Company,
+      rowIndex: index,
+    }));
+}
+
+async function writeCallResultToSheet(rowIndex, result) {
+  const doc = await getSheetClient();
+  const sheet = doc.sheetsByIndex[0];
+  const rows = await sheet.getRows();
+  const row = rows[rowIndex];
+
+  row.Status = result.status || 'Connected';
+  row['Call Summary'] = result.summary || '';
+
+  const currentCallCount = parseInt(row['# of Calls'] || '0', 10);
+  row['# of Calls'] = currentCallCount + 1;
+
+  await row.save();
+}
+
+module.exports = {
+  fetchGoogleSheetLeads,
+  writeCallResultToSheet,
+};
