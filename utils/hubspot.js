@@ -1,26 +1,14 @@
-// VB-v1.01-main/utils/hubspot.js
 const axios = require('axios');
 
-async function postNoteToHubSpot(apiKey, contactId, noteBody) {
+async function postNoteToHubSpot(apiKey, contactId, noteContent) {
   try {
-    const response = await axios.post(
+    // 1. Create the note
+    const noteResponse = await axios.post(
       'https://api.hubapi.com/crm/v3/objects/notes',
       {
         properties: {
-          hs_timestamp: new Date().toISOString(),
-          hs_note_body: noteBody,
-        },
-        associations: [
-          {
-            to: { id: contactId },
-            types: [
-              {
-                associationCategory: 'HUBSPOT_DEFINED',
-                associationTypeId: 3, // Contact association
-              }
-            ]
-          }
-        ]
+          hs_note_body: noteContent,
+        }
       },
       {
         headers: {
@@ -30,16 +18,31 @@ async function postNoteToHubSpot(apiKey, contactId, noteBody) {
       }
     );
 
-    console.log('✅ Note successfully created in HubSpot');
-    return response.data;
-  } catch (error) {
-    console.error('❌ Failed to create note in HubSpot:', {
-      status: error.response?.status,
-      message: error.message,
-      body: error.response?.data
+    const noteId = noteResponse.data.id;
+
+    // 2. Associate the note with the contact
+    await axios.put(
+      `https://api.hubapi.com/crm/v3/objects/notes/${noteId}/associations/contacts/${contactId}/note_to_contact`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    console.log('✅ Note created and associated successfully.');
+  } catch (err) {
+    console.error('❌ Failed to create or associate note in HubSpot:', {
+      status: err.response?.status,
+      message: err.message,
+      body: err.response?.data
     });
-    throw error;
+    throw err;
   }
 }
+
+module.exports = { postNoteToHubSpot };
 
 module.exports = { postNoteToHubSpot };
