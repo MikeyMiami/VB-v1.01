@@ -44,4 +44,5 @@ async function writeCallResultToSheet(rowIndex, result) {
 module.exports = {
   fetchGoogleSheetLeads,
   writeCallResultToSheet,
+  getLeadsFromGoogleSheets: fetchGoogleSheetLeads // alias for compatibility
 };
