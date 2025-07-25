@@ -20,6 +20,7 @@ const twilio = require('twilio');
 const db = require('./db'); // SQLite DB
 const { fetchLeads, bookAppointment } = require('./utils/integrations');
 const sheetsRoutes = require('./routes/sheets');
+const debugRoutes = require('./routes/debug');
 
 
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
@@ -150,6 +151,7 @@ app.use('/integrations', authMiddleware, require('./routes/integrations'));
 app.use('/post-call-summary', require('./routes/post-call-summary'));
 app.use('/notes', require('./routes/notes'));
 app.use('/sheets', sheetsRoutes);
+app.use('/debug', debugRoutes);
 
 
 
