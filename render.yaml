@@ -7,26 +7,44 @@ services:
     buildCommand: yarn install
     startCommand: yarn start
     envVars:
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: DEEPGRAM_SOCKET_URL
+        sync: false
       - key: DISK_PATH
         value: /data
-      - key: TWILIO_SID
+      - key: ELEVENLABS_API_KEY
         sync: false
-      - key: TWILIO_NUMBER
+      - key: ELEVENLABS_VOICE_ID
         sync: false
-      - key: TWILIO_AUTH
+      - key: GOOGLE_CREDENTIALS_BASE64
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_EMAIL
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
         sync: false
       - key: PUBLIC_URL
         sync: false
       - key: REDIS_HOST
         sync: false
-      - key: REDIS_PORT
-        sync: false
       - key: REDIS_PASSWORD
         sync: false
-    disk:
-      name: voicebot-persistent-disk
-      mountPath: /data
-      sizeGB: 1
+      - key: REDIS_PORT
+        sync: false
+      - key: TWILIO_AUTH
+        sync: false
+      - key: TWILIO_NUMBER
+        sync: false
+      - key: TWILIO_SID
+        sync: false
+    disks:
+      - name: voicebot-persistent-disk
+        mountPath: /data
+        sizeGB: 1
 
   - type: worker
     name: VB-v1.01-worker
@@ -36,24 +54,42 @@ services:
     buildCommand: yarn install
     startCommand: yarn worker
     envVars:
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: DEEPGRAM_SOCKET_URL
+        sync: false
       - key: DISK_PATH
         value: /data
-      - key: TWILIO_SID
+      - key: ELEVENLABS_API_KEY
         sync: false
-      - key: TWILIO_NUMBER
+      - key: ELEVENLABS_VOICE_ID
         sync: false
-      - key: TWILIO_AUTH
+      - key: GOOGLE_CREDENTIALS_BASE64
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_EMAIL
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
         sync: false
       - key: PUBLIC_URL
         sync: false
       - key: REDIS_HOST
         sync: false
-      - key: REDIS_PORT
-        sync: false
       - key: REDIS_PASSWORD
         sync: false
-    disk:
-      name: voicebot-persistent-disk
-      mountPath: /data
-      sizeGB: 1
+      - key: REDIS_PORT
+        sync: false
+      - key: TWILIO_AUTH
+        sync: false
+      - key: TWILIO_NUMBER
+        sync: false
+      - key: TWILIO_SID
+        sync: false
+    disks:
+      - name: voicebot-persistent-disk
+        mountPath: /data
+
 
