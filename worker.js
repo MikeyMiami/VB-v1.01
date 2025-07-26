@@ -1,55 +1,94 @@
 // VB-v1.01-main/worker.js
+
 const { Worker } = require('bullmq');
+const path = require('path');
+const { startOutboundCall } = require('./utils/twilio');
 const db = require('./db');
-const { makeCall } = require('./utils/twilio'); // This is your outbound call logic
-const { updateLeadStatus } = require('./utils/leadTracking'); // Optional: update status post-call
+require('dotenv').config();
 
 const connection = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT) || 6379,
+  host: process.env.REDIS_HOST || '127.0.0.1',
+  port: process.env.REDIS_PORT || 6379,
 };
 
-const worker = new Worker('call-queue', async job => {
-  const { lead, agentId } = job.data;
+const worker = new Worker('call-lead', async (job) => {
+  const {
+    lead,
+    agentId,
+    agentName,
+    prompt_script,
+    dial_limit,
+    max_calls_per_contact,
+    call_time_start,
+    call_time_end,
+    call_days,
+    double_dial_no_answer,
+    voice_id,
+    userId
+  } = job.data;
 
   try {
-    // Fetch agent attributes
-    const agent = await new Promise((resolve, reject) => {
-      db.get(`SELECT * FROM Agents WHERE id = ?`, [agentId], (err, row) => {
-        if (err) return reject(err);
-        resolve(row);
-      });
-    });
+    console.log(`🚀 Calling lead ${lead.phone} for agent ${agentName}`);
 
-    if (!agent) throw new Error(`Agent with ID ${agentId} not found.`);
-
-    // Respect call time window (e.g., 9 AM to 5 PM)
+    // Validate time constraints
     const now = new Date();
-    const hour = now.getHours();
-    if (hour < agent.call_time_start || hour >= agent.call_time_end) {
-      console.log(`Skipping call for ${lead.phone}: Outside call window.`);
+    const currentHour = now.getHours();
+    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+
+    const allowedDays = Array.isArray(call_days)
+      ? call_days
+      : JSON.parse(call_days || '[]');
+
+    if (
+      (call_time_start && currentHour < call_time_start) ||
+      (call_time_end && currentHour >= call_time_end) ||
+      (allowedDays.length && !allowedDays.includes(currentDay))
+    ) {
+      console.log(`⏰ Call to ${lead.phone} skipped due to time/day restrictions`);
       return;
     }
 
-    // Make the call
-    console.log(`📞 Calling ${lead.name || lead.phone} using bot: ${agent.name}`);
-    await makeCall(lead, agent);
+    // Check if this contact has exceeded max call attempts
+    const callCountRow = await db.get(
+      `SELECT count FROM CallAttempts WHERE lead_id = ? AND agent_id = ?`,
+      [lead.id, agentId]
+    );
 
-    // Optional: update status
-    if (lead.id && updateLeadStatus) {
-      await updateLeadStatus(lead.id, 'Attempted Contact');
+    const attempts = callCountRow?.count || 0;
+
+    if (max_calls_per_contact && attempts >= max_calls_per_contact) {
+      console.log(`⚠️ Skipping ${lead.phone} — reached max calls (${attempts})`);
+      return;
     }
 
-  } catch (err) {
-    console.error(`❌ Error processing call job:`, err);
+    // Initiate outbound call
+    const callSid = await startOutboundCall({
+      lead,
+      agentId,
+      agentName,
+      prompt_script,
+      voice_id,
+      userId
+    });
+
+    // Update call attempts
+    if (callCountRow) {
+      await db.run(
+        `UPDATE CallAttempts SET count = count + 1 WHERE lead_id = ? AND agent_id = ?`,
+        [lead.id, agentId]
+      );
+    } else {
+      await db.run(
+        `INSERT INTO CallAttempts (lead_id, agent_id, count) VALUES (?, ?, 1)`,
+        [lead.id, agentId]
+      );
+    }
+
+    console.log(`✅ Call placed to ${lead.phone}, SID: ${callSid}`);
+  } catch (error) {
+    console.error(`❌ Error calling lead ${lead.phone}:`, error.message);
   }
 }, { connection });
 
-worker.on('completed', job => {
-  console.log(`✅ Completed call job for ${job.data.lead.phone}`);
-});
-
-worker.on('failed', (job, err) => {
-  console.error(`🔥 Call job failed for ${job.data.lead.phone}:`, err);
-});
+console.log('👷 Worker is running and listening for call-lead jobs...');
 
