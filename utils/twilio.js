@@ -1,12 +1,13 @@
 // utils/twilio.js
 const twilio = require('twilio');
 
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+const accountSid = process.env.TWILIO_SID;
+const authToken = process.env.TWILIO_AUTH;
+const fromNumber = process.env.TWILIO_NUMBER;
+const publicUrl = process.env.PUBLIC_URL;
 
-if (!accountSid || !authToken || !fromNumber) {
-  throw new Error('Twilio credentials are not properly configured.');
+if (!accountSid || !authToken || !fromNumber || !publicUrl) {
+  throw new Error('Twilio or public URL environment variables are not properly configured.');
 }
 
 const client = twilio(accountSid, authToken);
@@ -20,11 +21,11 @@ const client = twilio(accountSid, authToken);
 async function initiateCall(to, botId) {
   try {
     const call = await client.calls.create({
-      url: `${process.env.PUBLIC_API_URL}/twilio/voice-response?botId=${encodeURIComponent(botId)}`,
+      url: `${publicUrl}/twilio/voice-response?botId=${encodeURIComponent(botId)}`,
       to,
       from: fromNumber,
       method: 'POST',
-      statusCallback: `${process.env.PUBLIC_API_URL}/twilio/status-callback`,
+      statusCallback: `${publicUrl}/twilio/status-callback`,
       statusCallbackMethod: 'POST',
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
     });
