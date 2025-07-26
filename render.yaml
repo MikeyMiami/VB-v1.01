@@ -2,7 +2,7 @@ services:
   - type: web
     name: VB-v1.01-web
     runtime: node
-    repo: https://github.com/YOUR_USERNAME/YOUR_REPO
+    repo: https://github.com/MikeyMiami/VB-v1.01
     branch: main
     buildCommand: yarn install
     startCommand: yarn start
@@ -31,7 +31,7 @@ services:
   - type: worker
     name: VB-v1.01-worker
     runtime: node
-    repo: https://github.com/YOUR_USERNAME/YOUR_REPO
+    repo: https://github.com/MikeyMiami/VB-v1.01
     branch: main
     buildCommand: yarn install
     startCommand: yarn worker
@@ -55,3 +55,4 @@ services:
     disks:
       - name: voicebot-persistent-disk
         mountPath: /data
+
