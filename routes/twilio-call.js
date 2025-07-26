@@ -45,12 +45,15 @@ router.post('/start', async (req, res) => {
 });
 
 // 📞 Initial call response (greeting + stream + pause)
-router.post('/voice', (req, res) => {
+router.post('/voice', async (req, res) => {
   const twiml = new VoiceResponse();
   const botId = req.query.botId;
 
-  db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, agent) => {
-    if (err || !agent) {
+  try {
+    const { rows } = await db.query(`SELECT * FROM Agents WHERE id = $1`, [botId]);
+    const agent = rows[0];
+
+    if (!agent) {
       twiml.say('Hello, this is the AI agent. Please speak your question.');
     } else {
       twiml.say(agent.prompt_script ? agent.prompt_script.substring(0, 100) : 'Hello, this is the AI agent. Please speak your question.');
@@ -66,7 +69,10 @@ router.post('/voice', (req, res) => {
     twiml.pause({ length: 120 }); // 2 min session
     res.type('text/xml');
     res.send(twiml.toString());
-  });
+  } catch (err) {
+    console.error('❌ Error in /voice:', err.message);
+    res.status(500).send('Error');
+  }
 });
 
 // 📲 Call status update (used to trigger follow-up)
@@ -75,8 +81,11 @@ router.post('/status', async (req, res) => {
 
   const { CallStatus, botId, contactId, to } = req.body;
 
-  db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], async (err, agent) => {
-    if (err || !agent) {
+  try {
+    const { rows } = await db.query(`SELECT * FROM Agents WHERE id = $1`, [botId]);
+    const agent = rows[0];
+
+    if (!agent) {
       console.warn(`⚠️ Agent not found for ID: ${botId}`);
       return res.sendStatus(200);
     }
@@ -103,20 +112,21 @@ router.post('/status', async (req, res) => {
       }
     }
 
-    db.run(
+    await db.query(
       `INSERT INTO CallLogs (botId, call_date, call_duration, call_outcome, contact_phone)
-       VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?)`,
-      [botId, req.body.CallDuration || 0, CallStatus, to],
-      (err) => {
-        if (err) console.error('Log error:', err);
-      }
+       VALUES ($1, CURRENT_TIMESTAMP, $2, $3, $4)`,
+      [botId, req.body.CallDuration || 0, CallStatus, to]
     );
 
     res.sendStatus(200);
-  });
+  } catch (err) {
+    console.error('❌ Error in /status handler:', err.message);
+    res.sendStatus(500);
+  }
 });
 
 module.exports = router;
+
 
 
 
