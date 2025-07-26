@@ -26,6 +26,7 @@ services:
     disk:
       name: voicebot-persistent-disk
       mountPath: /data
+      sizeGB: 1
 
   - type: worker
     name: VB-v1.01-worker
@@ -54,8 +55,5 @@ services:
     disk:
       name: voicebot-persistent-disk
       mountPath: /data
-
-disks:
-  - name: voicebot-persistent-disk
-    sizeGB: 1
+      sizeGB: 1
 
