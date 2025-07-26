@@ -1,60 +1,79 @@
-// VB-v1.01-main/worker.js
+// worker.js
 const { Worker } = require('bullmq');
 const db = require('./db');
-const { getCallAttempts, incrementCallAttempt, markCallAttemptStatus } = require('./utils/queueUtils');
-const { makeCallWithBot } = require('./utils/twilio'); // You'll build this next
-const IORedis = require('ioredis');
+const { initiateCall } = require('./utils/twilio');
+const dayjs = require('dayjs');
 
-const connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379');
+const QUEUE_NAME = 'call-lead';
+const connection = {
+  host: process.env.REDIS_HOST || '127.0.0.1',
+  port: process.env.REDIS_PORT || 6379,
+};
 
-const callWorker = new Worker(
-  'call-lead',
-  async (job) => {
-    const { agentId, lead } = job.data;
+const callWorker = new Worker(QUEUE_NAME, async (job) => {
+  const {
+    lead,
+    agent,
+  } = job.data;
 
-    try {
-      // Fetch agent config
-      const agent = await new Promise((resolve, reject) => {
-        db.get('SELECT * FROM Agents WHERE id = ?', [agentId], (err, row) => {
-          if (err) return reject(err);
-          resolve(row);
-        });
-      });
+  const now = dayjs();
+  const currentHour = now.hour();
+  const currentDay = now.format('dddd').toLowerCase(); // e.g., 'monday'
 
-      if (!agent) throw new Error(`Agent with ID ${agentId} not found.`);
+  // ✅ Call time/day enforcement
+  const allowedDays = JSON.parse(agent.call_days || '[]');
+  if (!allowedDays.includes(currentDay)) {
+    console.log(`⏸️ Skipping call - ${currentDay} is not in agent's allowed days`);
+    return;
+  }
+  if (currentHour < agent.call_time_start || currentHour >= agent.call_time_end) {
+    console.log(`⏸️ Skipping call - outside call hours (${currentHour}h)`);
+    return;
+  }
 
-      // Skip if max attempts reached
-      const attemptCount = await getCallAttempts(agentId, lead.phone);
-      if (attemptCount >= agent.max_calls_per_contact) {
-        console.log(`❌ Skipping ${lead.phone} — max attempts reached.`);
+  // ✅ Check dial limits for the day
+  db.get(
+    `SELECT COUNT(*) AS count FROM CallAttempts WHERE botId = ? AND date(created_at) = date('now')`,
+    [agent.id],
+    async (err, row) => {
+      if (err) {
+        console.error('❌ Error checking dial count:', err);
+        return;
+      }
+      const dialCount = row?.count || 0;
+      if (dialCount >= agent.dial_limit) {
+        console.log(`⚠️ Dial limit reached (${dialCount}/${agent.dial_limit})`);
         return;
       }
 
-      // Log call attempt
-      await incrementCallAttempt(agentId, lead.phone);
-      console.log(`📞 Calling ${lead.phone}... [Attempt ${attemptCount + 1}]`);
+      // ✅ Make the call
+      try {
+        const call = await initiateCall(lead.phone, agent.id);
 
-      // Make the call (replace this stub with real logic in utils/twilio.js)
-      const callResult = await makeCallWithBot({
-        agent,
-        lead,
-      });
+        // Log to CallAttempts
+        db.run(
+          `INSERT INTO CallAttempts (botId, leadId, phone_number, status, call_sid, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+          [agent.id, lead.id || null, lead.phone, 'initiated', call.sid]
+        );
 
-      // Mark status (you can make this dynamic if you inspect Twilio status later)
-      await markCallAttemptStatus(agentId, lead.phone, callResult.success ? 'success' : 'failed');
-      console.log(`✅ Call ${lead.phone} complete: ${callResult.status}`);
-    } catch (err) {
-      console.error('❌ Call worker error:', err);
+        console.log(`📞 Called ${lead.phone} from agent ${agent.name}`);
+      } catch (err) {
+        console.error(`❌ Call failed for ${lead.phone}:`, err.message);
+
+        db.run(
+          `INSERT INTO CallAttempts (botId, leadId, phone_number, status, created_at) VALUES (?, ?, ?, ?, datetime('now'))`,
+          [agent.id, lead.id || null, lead.phone, 'failed']
+        );
+      }
     }
-  },
-  { connection }
-);
+  );
+}, { connection });
 
 callWorker.on('completed', (job) => {
-  console.log(`🎉 Job ${job.id} completed`);
+  console.log(`✅ Job completed for lead: ${job.id}`);
 });
 
 callWorker.on('failed', (job, err) => {
-  console.error(`💥 Job ${job.id} failed:`, err);
+  console.error(`❌ Job failed for lead: ${job.id}`, err.message);
 });
 
