@@ -29,6 +29,7 @@ db.serialize(() => {
       modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
   db.run(`
     CREATE TABLE IF NOT EXISTS CallLogs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,6 +47,7 @@ db.serialize(() => {
       modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
   db.run(`
     CREATE TABLE IF NOT EXISTS DashboardStats (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,6 +60,7 @@ db.serialize(() => {
       modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
   db.run(`
     CREATE TABLE IF NOT EXISTS Integrations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,6 +72,21 @@ db.serialize(() => {
       creds TEXT,  -- JSON string of additional creds
       createdDate DATETIME DEFAULT CURRENT_TIMESTAMP,
       modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS CallAttempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agentId INTEGER NOT NULL,
+      leadPhone TEXT NOT NULL,
+      attemptCount INTEGER DEFAULT 0,
+      lastAttemptTime DATETIME,
+      status TEXT DEFAULT 'pending',
+      notes TEXT,
+      createdDate DATETIME DEFAULT CURRENT_TIMESTAMP,
+      modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (agentId) REFERENCES Agents(id)
     )
   `);
 
@@ -86,3 +104,4 @@ db.serialize(() => {
 });
 
 module.exports = db;
+
