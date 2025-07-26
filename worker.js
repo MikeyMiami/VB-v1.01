@@ -1,6 +1,6 @@
 // worker.js
 const { Worker } = require('bullmq');
-const { Pool } = require('pg');
+const db = require('./db'); // ✅ Use shared db.js file
 const { initiateCall } = require('./utils/twilio');
 const dayjs = require('dayjs');
 
@@ -10,14 +10,7 @@ const connection = {
   port: process.env.REDIS_PORT || 6379,
 };
 
-// PostgreSQL pool setup
-const pool = new Pool({
-  connectionString: process.env.POSTGRES_URL,
-});
-
-pool.connect()
-  .then(() => console.log('PostgreSQL connected (worker)'))
-  .catch(err => console.error('PostgreSQL connection error (worker):', err));
+console.log('✅ Worker connected to Redis queue:', QUEUE_NAME);
 
 const callWorker = new Worker(QUEUE_NAME, async (job) => {
   const {
@@ -42,7 +35,7 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
 
   // ✅ Check dial limits for the day
   try {
-    const result = await pool.query(
+    const result = await db.query(
       `SELECT COUNT(*) FROM CallAttempts WHERE agentId = $1 AND DATE(createdDate) = CURRENT_DATE`,
       [agent.id]
     );
@@ -57,7 +50,7 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
     const call = await initiateCall(lead.phone, agent.id);
 
     // Log to CallAttempts
-    await pool.query(
+    await db.query(
       `INSERT INTO CallAttempts (agentId, leadPhone, status, call_sid, createdDate)
        VALUES ($1, $2, $3, $4, NOW())`,
       [agent.id, lead.phone, 'initiated', call.sid]
@@ -69,7 +62,7 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
     console.error(`❌ Call failed for ${lead.phone}:`, err.message);
 
     try {
-      await pool.query(
+      await db.query(
         `INSERT INTO CallAttempts (agentId, leadPhone, status, createdDate)
          VALUES ($1, $2, $3, NOW())`,
         [agent.id, lead.phone, 'failed']
@@ -87,5 +80,6 @@ callWorker.on('completed', (job) => {
 callWorker.on('failed', (job, err) => {
   console.error(`❌ Job failed for lead: ${job.id}`, err.message);
 });
+
 
 
