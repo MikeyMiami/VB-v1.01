@@ -1,107 +1,106 @@
 // VB-v1.01-main/db.js
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const { Pool } = require('pg');
 
-const dbPath = process.env.DISK_PATH ? path.join(process.env.DISK_PATH, 'app.db') : './app.db';
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) console.error('SQLite error:', err);
-  else console.log('SQLite connected');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
-// Init tables
-db.serialize(() => {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Agents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      userId TEXT,
-      name TEXT,
-      prompt_script TEXT,
-      dial_limit INTEGER,
-      max_calls_per_contact INTEGER,
-      call_time_start INTEGER,
-      call_time_end INTEGER,
-      call_days TEXT,  -- JSON string of array
-      double_dial_no_answer BOOLEAN,
-      active BOOLEAN DEFAULT 0,
-      integrationId TEXT,
-      voice_id TEXT,
-      createdDate DATETIME DEFAULT CURRENT_TIMESTAMP,
-      modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+const initTables = async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Agents (
+        id SERIAL PRIMARY KEY,
+        userId TEXT,
+        name TEXT,
+        prompt_script TEXT,
+        dial_limit INTEGER,
+        max_calls_per_contact INTEGER,
+        call_time_start INTEGER,
+        call_time_end INTEGER,
+        call_days TEXT,
+        double_dial_no_answer BOOLEAN,
+        active BOOLEAN DEFAULT FALSE,
+        integrationId TEXT,
+        voice_id TEXT,
+        createdDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        modifiedDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS CallLogs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      botId TEXT,
-      call_date DATETIME,
-      call_duration INTEGER,
-      call_outcome TEXT,
-      category_label TEXT,
-      contact_name TEXT,
-      contact_phone TEXT,
-      lead_source TEXT,
-      notes TEXT,
-      recording TEXT,
-      createdDate DATETIME DEFAULT CURRENT_TIMESTAMP,
-      modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS CallLogs (
+        id SERIAL PRIMARY KEY,
+        botId TEXT,
+        call_date TIMESTAMP,
+        call_duration INTEGER,
+        call_outcome TEXT,
+        category_label TEXT,
+        contact_name TEXT,
+        contact_phone TEXT,
+        lead_source TEXT,
+        notes TEXT,
+        recording TEXT,
+        createdDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        modifiedDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS DashboardStats (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      botId TEXT,
-      appointments_set TEXT,
-      conversation_count INTEGER,
-      date TEXT,
-      dials_count INTEGER,
-      createdDate DATETIME DEFAULT CURRENT_TIMESTAMP,
-      modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS DashboardStats (
+        id SERIAL PRIMARY KEY,
+        botId TEXT,
+        appointments_set TEXT,
+        conversation_count INTEGER,
+        date TEXT,
+        dials_count INTEGER,
+        createdDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        modifiedDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS Integrations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      userId TEXT,
-      api_key TEXT,  -- Hashed
-      integration_type TEXT,
-      last_tested DATETIME,
-      test_status TEXT,
-      creds TEXT,  -- JSON string of additional creds
-      createdDate DATETIME DEFAULT CURRENT_TIMESTAMP,
-      modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Integrations (
+        id SERIAL PRIMARY KEY,
+        userId TEXT,
+        api_key TEXT,
+        integration_type TEXT,
+        last_tested TIMESTAMP,
+        test_status TEXT,
+        creds TEXT,
+        createdDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        modifiedDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS CallAttempts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      agentId INTEGER NOT NULL,
-      leadPhone TEXT NOT NULL,
-      attemptCount INTEGER DEFAULT 0,
-      lastAttemptTime DATETIME,
-      status TEXT DEFAULT 'pending',
-      notes TEXT,
-      createdDate DATETIME DEFAULT CURRENT_TIMESTAMP,
-      modifiedDate DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (agentId) REFERENCES Agents(id)
-    )
-  `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS CallAttempts (
+        id SERIAL PRIMARY KEY,
+        agentId INTEGER NOT NULL,
+        leadPhone TEXT NOT NULL,
+        attemptCount INTEGER DEFAULT 0,
+        lastAttemptTime TIMESTAMP,
+        status TEXT DEFAULT 'pending',
+        notes TEXT,
+        createdDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        modifiedDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (agentId) REFERENCES Agents(id)
+      );
+    `);
 
-  // Add voice_id column if not exists
-  db.all("PRAGMA table_info(Agents)", (err, rows) => {
-    if (err) return console.error(err);
-    const hasVoiceId = rows.some(row => row.name === 'voice_id');
-    if (!hasVoiceId) {
-      db.run("ALTER TABLE Agents ADD COLUMN voice_id TEXT", (err) => {
-        if (err) console.error('Error adding voice_id column:', err);
-        else console.log('Added voice_id column to Agents table');
-      });
-    }
-  });
-});
+    console.log('✅ PostgreSQL connected and tables initialized');
+  } catch (err) {
+    console.error('❌ PostgreSQL init error:', err);
+  }
+};
+
+initTables();
+
+module.exports = {
+  query: (text, params) => pool.query(text, params),
+  pool
+};
+
 
 module.exports = db;
 
