@@ -41,10 +41,6 @@ services:
         sync: false
       - key: TWILIO_SID
         sync: false
-    disks:
-      - name: voicebot-persistent-disk
-        mountPath: /data
-        sizeGB: 1
 
   - type: worker
     name: VB-v1.01-worker
@@ -88,8 +84,4 @@ services:
         sync: false
       - key: TWILIO_SID
         sync: false
-    disks:
-      - name: voicebot-persistent-disk
-        mountPath: /data
-
 
