@@ -77,3 +77,12 @@ callWorker.on('failed', (job, err) => {
   console.error(`❌ Job failed for lead: ${job.id}`, err.message);
 });
 
+// ✅ TEST: Can the worker read from shared DB? (non-blocking, runs once on boot)
+db.all(`SELECT * FROM test_table`, (err, rows) => {
+  if (err) {
+    console.error('❌ Worker DB test failed (could not read test_table):', err.message);
+  } else {
+    console.log('✅ Worker DB test succeeded. Found rows in test_table:', rows);
+  }
+});
+
