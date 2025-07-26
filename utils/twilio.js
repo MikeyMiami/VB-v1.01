@@ -1,48 +1,43 @@
-// VB-v1.01-main/utils/twilio.js
-
+// utils/twilio.js
 const twilio = require('twilio');
-const db = require('../db');
-const VoiceResponse = twilio.twiml.VoiceResponse;
 
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+
+if (!accountSid || !authToken || !fromNumber) {
+  throw new Error('Twilio credentials are not properly configured.');
+}
+
+const client = twilio(accountSid, authToken);
 
 /**
- * Starts an outbound call using Twilio with the given lead and agent data.
- * @param {Object} jobData - Contains lead info and agent attributes.
+ * Initiates a voice call to a given number using Twilio.
+ * @param {string} to - The phone number to call (in E.164 format).
+ * @param {string} botId - A unique identifier for the bot session (e.g. agentId).
+ * @returns {Promise<object>} Twilio call response.
  */
-async function startOutboundCall(jobData) {
-  const {
-    lead,
-    agentId,
-    agentName,
-    prompt_script,
-    voice_id,
-    userId
-  } = jobData;
-
-  if (!lead.phone) {
-    throw new Error('Lead does not have a phone number.');
-  }
-
+async function initiateCall(to, botId) {
   try {
     const call = await client.calls.create({
-      url: `${process.env.BASE_URL}/twilio-call/stream?leadId=${lead.id}&agentId=${agentId}`,
-      to: lead.phone,
-      from: process.env.TWILIO_CALLER_ID,
+      url: `${process.env.PUBLIC_API_URL}/twilio/voice-response?botId=${encodeURIComponent(botId)}`,
+      to,
+      from: fromNumber,
       method: 'POST',
+      statusCallback: `${process.env.PUBLIC_API_URL}/twilio/status-callback`,
+      statusCallbackMethod: 'POST',
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
     });
 
-    console.log(`📞 Started call to ${lead.phone}, Call SID: ${call.sid}`);
-
-    // Optionally update DB or logs here to reflect the call was started
-
-    return call.sid;
-  } catch (error) {
-    console.error(`❌ Error placing call to ${lead.phone}:`, error.message);
-    throw error;
+    console.log(`✅ Call initiated to ${to} - SID: ${call.sid}`);
+    return call;
+  } catch (err) {
+    console.error(`❌ Error initiating call to ${to}:`, err.message);
+    throw err;
   }
 }
 
 module.exports = {
-  startOutboundCall,
+  initiateCall,
 };
+
