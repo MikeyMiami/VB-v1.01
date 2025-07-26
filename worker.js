@@ -1,94 +1,60 @@
 // VB-v1.01-main/worker.js
-
 const { Worker } = require('bullmq');
-const path = require('path');
-const { startOutboundCall } = require('./utils/twilio');
 const db = require('./db');
-require('dotenv').config();
+const { getCallAttempts, incrementCallAttempt, markCallAttemptStatus } = require('./utils/queueUtils');
+const { makeCallWithBot } = require('./utils/twilio'); // You'll build this next
+const IORedis = require('ioredis');
 
-const connection = {
-  host: process.env.REDIS_HOST || '127.0.0.1',
-  port: process.env.REDIS_PORT || 6379,
-};
+const connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379');
 
-const worker = new Worker('call-lead', async (job) => {
-  const {
-    lead,
-    agentId,
-    agentName,
-    prompt_script,
-    dial_limit,
-    max_calls_per_contact,
-    call_time_start,
-    call_time_end,
-    call_days,
-    double_dial_no_answer,
-    voice_id,
-    userId
-  } = job.data;
+const callWorker = new Worker(
+  'call-lead',
+  async (job) => {
+    const { agentId, lead } = job.data;
 
-  try {
-    console.log(`🚀 Calling lead ${lead.phone} for agent ${agentName}`);
+    try {
+      // Fetch agent config
+      const agent = await new Promise((resolve, reject) => {
+        db.get('SELECT * FROM Agents WHERE id = ?', [agentId], (err, row) => {
+          if (err) return reject(err);
+          resolve(row);
+        });
+      });
 
-    // Validate time constraints
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+      if (!agent) throw new Error(`Agent with ID ${agentId} not found.`);
 
-    const allowedDays = Array.isArray(call_days)
-      ? call_days
-      : JSON.parse(call_days || '[]');
+      // Skip if max attempts reached
+      const attemptCount = await getCallAttempts(agentId, lead.phone);
+      if (attemptCount >= agent.max_calls_per_contact) {
+        console.log(`❌ Skipping ${lead.phone} — max attempts reached.`);
+        return;
+      }
 
-    if (
-      (call_time_start && currentHour < call_time_start) ||
-      (call_time_end && currentHour >= call_time_end) ||
-      (allowedDays.length && !allowedDays.includes(currentDay))
-    ) {
-      console.log(`⏰ Call to ${lead.phone} skipped due to time/day restrictions`);
-      return;
+      // Log call attempt
+      await incrementCallAttempt(agentId, lead.phone);
+      console.log(`📞 Calling ${lead.phone}... [Attempt ${attemptCount + 1}]`);
+
+      // Make the call (replace this stub with real logic in utils/twilio.js)
+      const callResult = await makeCallWithBot({
+        agent,
+        lead,
+      });
+
+      // Mark status (you can make this dynamic if you inspect Twilio status later)
+      await markCallAttemptStatus(agentId, lead.phone, callResult.success ? 'success' : 'failed');
+      console.log(`✅ Call ${lead.phone} complete: ${callResult.status}`);
+    } catch (err) {
+      console.error('❌ Call worker error:', err);
     }
+  },
+  { connection }
+);
 
-    // Check if this contact has exceeded max call attempts
-    const callCountRow = await db.get(
-      `SELECT count FROM CallAttempts WHERE lead_id = ? AND agent_id = ?`,
-      [lead.id, agentId]
-    );
+callWorker.on('completed', (job) => {
+  console.log(`🎉 Job ${job.id} completed`);
+});
 
-    const attempts = callCountRow?.count || 0;
-
-    if (max_calls_per_contact && attempts >= max_calls_per_contact) {
-      console.log(`⚠️ Skipping ${lead.phone} — reached max calls (${attempts})`);
-      return;
-    }
-
-    // Initiate outbound call
-    const callSid = await startOutboundCall({
-      lead,
-      agentId,
-      agentName,
-      prompt_script,
-      voice_id,
-      userId
-    });
-
-    // Update call attempts
-    if (callCountRow) {
-      await db.run(
-        `UPDATE CallAttempts SET count = count + 1 WHERE lead_id = ? AND agent_id = ?`,
-        [lead.id, agentId]
-      );
-    } else {
-      await db.run(
-        `INSERT INTO CallAttempts (lead_id, agent_id, count) VALUES (?, ?, 1)`,
-        [lead.id, agentId]
-      );
-    }
-
-    console.log(`✅ Call placed to ${lead.phone}, SID: ${callSid}`);
-  } catch (error) {
-    console.error(`❌ Error calling lead ${lead.phone}:`, error.message);
-  }
-}, { connection });
-
-console.log('👷 Worker is running and listening for call-lead jobs...');
+callWorker.on('failed', (job, err) => {
+  console.error(`💥 Job ${job.id} failed:`, err);
+});
 
