@@ -1,6 +1,6 @@
 // worker.js
 const { Worker } = require('bullmq');
-const db = require('./db');
+const { Pool } = require('pg');
 const { initiateCall } = require('./utils/twilio');
 const dayjs = require('dayjs');
 
@@ -10,52 +10,73 @@ const connection = {
   port: process.env.REDIS_PORT || 6379,
 };
 
+// PostgreSQL pool setup
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL,
+});
+
+pool.connect()
+  .then(() => console.log('PostgreSQL connected (worker)'))
+  .catch(err => console.error('PostgreSQL connection error (worker):', err));
+
 const callWorker = new Worker(QUEUE_NAME, async (job) => {
-  const { lead, agent } = job.data;
+  const {
+    lead,
+    agent,
+  } = job.data;
 
   const now = dayjs();
   const currentHour = now.hour();
-  const currentDay = now.format('dddd').toLowerCase();
+  const currentDay = now.format('dddd').toLowerCase(); // e.g., 'monday'
 
+  // ✅ Call time/day enforcement
   const allowedDays = JSON.parse(agent.call_days || '[]');
   if (!allowedDays.includes(currentDay)) {
     console.log(`⏸️ Skipping call - ${currentDay} is not in agent's allowed days`);
     return;
   }
-
   if (currentHour < agent.call_time_start || currentHour >= agent.call_time_end) {
     console.log(`⏸️ Skipping call - outside call hours (${currentHour}h)`);
     return;
   }
 
+  // ✅ Check dial limits for the day
   try {
-    const result = await db.query(
-      `SELECT COUNT(*) FROM "CallAttempts" WHERE "botId" = $1 AND DATE("createdDate") = CURRENT_DATE`,
+    const result = await pool.query(
+      `SELECT COUNT(*) FROM CallAttempts WHERE agentId = $1 AND DATE(createdDate) = CURRENT_DATE`,
       [agent.id]
     );
+    const dialCount = parseInt(result.rows[0].count) || 0;
 
-    const dialCount = parseInt(result.rows[0].count, 10);
     if (dialCount >= agent.dial_limit) {
       console.log(`⚠️ Dial limit reached (${dialCount}/${agent.dial_limit})`);
       return;
     }
 
+    // ✅ Make the call
     const call = await initiateCall(lead.phone, agent.id);
 
-    await db.query(
-      `INSERT INTO "CallAttempts" ("botId", "leadId", "phone_number", "status", "call_sid", "createdDate") 
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [agent.id, lead.id || null, lead.phone, 'initiated', call.sid]
+    // Log to CallAttempts
+    await pool.query(
+      `INSERT INTO CallAttempts (agentId, leadPhone, status, call_sid, createdDate)
+       VALUES ($1, $2, $3, $4, NOW())`,
+      [agent.id, lead.phone, 'initiated', call.sid]
     );
 
     console.log(`📞 Called ${lead.phone} from agent ${agent.name}`);
+
   } catch (err) {
     console.error(`❌ Call failed for ${lead.phone}:`, err.message);
-    await db.query(
-      `INSERT INTO "CallAttempts" ("botId", "leadId", "phone_number", "status", "createdDate") 
-       VALUES ($1, $2, $3, $4, NOW())`,
-      [agent.id, lead.id || null, lead.phone, 'failed']
-    );
+
+    try {
+      await pool.query(
+        `INSERT INTO CallAttempts (agentId, leadPhone, status, createdDate)
+         VALUES ($1, $2, $3, NOW())`,
+        [agent.id, lead.phone, 'failed']
+      );
+    } catch (logErr) {
+      console.error('❌ Failed to log failed call attempt:', logErr.message);
+    }
   }
 }, { connection });
 
