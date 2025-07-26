@@ -23,10 +23,9 @@ services:
         sync: false
       - key: REDIS_PASSWORD
         sync: false
-    disks:
-      - name: voicebot-persistent-disk
-        mountPath: /data
-        sizeGB: 1
+    disk:
+      name: voicebot-persistent-disk
+      mountPath: /data
 
   - type: worker
     name: VB-v1.01-worker
@@ -52,7 +51,11 @@ services:
         sync: false
       - key: REDIS_PASSWORD
         sync: false
-    disks:
-      - name: voicebot-persistent-disk
-        mountPath: /data
+    disk:
+      name: voicebot-persistent-disk
+      mountPath: /data
+
+disks:
+  - name: voicebot-persistent-disk
+    sizeGB: 1
 
