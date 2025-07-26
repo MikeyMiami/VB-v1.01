@@ -107,7 +107,3 @@ module.exports = {
   pool,
 };
 
-
-
-module.exports = db;
-
