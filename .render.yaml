@@ -1,0 +1,57 @@
+services:
+  - type: web
+    name: VB-v1.01-web
+    runtime: node
+    repo: https://github.com/YOUR_USERNAME/YOUR_REPO
+    branch: main
+    buildCommand: yarn install
+    startCommand: yarn start
+    envVars:
+      - key: DISK_PATH
+        value: /data
+      - key: TWILIO_SID
+        sync: false
+      - key: TWILIO_NUMBER
+        sync: false
+      - key: TWILIO_AUTH
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+    disks:
+      - name: voicebot-persistent-disk
+        mountPath: /data
+        sizeGB: 1
+
+  - type: worker
+    name: VB-v1.01-worker
+    runtime: node
+    repo: https://github.com/YOUR_USERNAME/YOUR_REPO
+    branch: main
+    buildCommand: yarn install
+    startCommand: yarn worker
+    envVars:
+      - key: DISK_PATH
+        value: /data
+      - key: TWILIO_SID
+        sync: false
+      - key: TWILIO_NUMBER
+        sync: false
+      - key: TWILIO_AUTH
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+    disks:
+      - name: voicebot-persistent-disk
+        mountPath: /data
