@@ -3,6 +3,8 @@ const { Worker } = require('bullmq');
 const db = require('./db'); // ✅ Use shared db.js file
 const twilio = require('twilio');
 const dayjs = require('dayjs');
+const { logAgentQueue } = require('./utils/queueLogger');
+
 
 const QUEUE_NAME = 'call-lead';
 const connection = {
