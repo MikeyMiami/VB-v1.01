@@ -47,7 +47,6 @@ const redisConnection = {
 const call = new ('calls', { connection: redisConnection });
 
 // 🕒 AUTOPILOT CRON JOB
-const cron = require('node-cron');
 const runAutopilot = require('./cron/autopilot');
 
 cron.schedule('*/10 * * * *', async () => {
