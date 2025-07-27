@@ -7,7 +7,12 @@ async function getGoogleCalendarClient(agentId) {
   const { rows } = await db.query(`SELECT calendar_token FROM Agents WHERE id = $1`, [agentId]);
   if (!rows.length || !rows[0].calendar_token) throw new Error('No calendar token found');
 
-  const tokens = JSON.parse(rows[0].calendar_token);
+  let tokens;
+  try {
+    tokens = JSON.parse(rows[0].calendar_token);
+  } catch (e) {
+    throw new Error('Invalid token format in database');
+  }
 
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -25,6 +30,7 @@ async function getGoogleCalendarClient(agentId) {
         `UPDATE Agents SET calendar_token = $1 WHERE id = $2`,
         [JSON.stringify(updated), agentId]
       );
+      console.log(`🔁 Refreshed and updated calendar token for agent ${agentId}`);
     }
   });
 
@@ -69,7 +75,24 @@ async function createCalendarEvent(agentId, recipientEmail, startTimeISO) {
   }
 }
 
+// Optional debug tool: log calendar token
+async function debugAgentCalendarTokens(agentId) {
+  const { rows } = await db.query(`SELECT calendar_token FROM Agents WHERE id = $1`, [agentId]);
+  if (!rows.length) {
+    console.warn(`⚠️ No agent found with ID ${agentId}`);
+    return;
+  }
+
+  try {
+    const token = JSON.parse(rows[0].calendar_token);
+    console.log(`🛠️ Calendar token for agent ${agentId}:`, token);
+  } catch (e) {
+    console.error(`❌ Failed to parse token for agent ${agentId}:`, e.message);
+  }
+}
+
 module.exports = {
   getGoogleCalendarClient,
   createCalendarEvent,
+  debugAgentCalendarTokens, // exported for optional use
 };
