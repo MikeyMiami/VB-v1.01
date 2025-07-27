@@ -79,7 +79,7 @@ router.post('/voice', async (req, res) => {
 router.post('/status', async (req, res) => {
   console.log('Call status update:', JSON.stringify(req.body));
 
-  const { CallStatus, botId, contactId, to } = req.body;
+  const { CallStatus, CallSid, botId, contactId, to } = req.body;
 
   try {
     const { rows } = await db.query(`SELECT * FROM Agents WHERE id = $1`, [botId]);
@@ -90,12 +90,25 @@ router.post('/status', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    if (CallStatus === 'no-answer' && agent.double_dial_no_answer) {
-      const callQueue = new Queue('calls', { connection: redisConnection });
-      await callQueue.add('dial', { botId, phone: to, contactId });
+    // 📞 Retry logic for no-answer or busy if double_dial_no_answer is enabled
+    if ((CallStatus === 'no-answer' || CallStatus === 'busy') && agent.double_dial_no_answer) {
+      const result = await db.query(
+        `SELECT COUNT(*) FROM CallAttempts WHERE agentId = $1 AND leadPhone = $2 AND DATE(createdDate) = CURRENT_DATE`,
+        [botId, to]
+      );
+      const attemptsToday = parseInt(result.rows[0].count || '0');
+
+      if (attemptsToday < 2) {
+        console.log(`🔁 Retrying ${to} (Attempt ${attemptsToday + 1})`);
+
+        const callQueue = new Queue('calls', { connection: redisConnection });
+        await callQueue.add('dial', { botId, phone: to, contactId });
+      } else {
+        console.log(`⛔ Max retry attempts reached today for ${to}`);
+      }
     }
 
-    // 🗒️ Add post-call note to HubSpot
+    // 🗒️ Add post-call note to HubSpot if completed
     if (CallStatus === 'completed') {
       const timestamp = new Date().toLocaleString();
       const note = `📞 Call completed at ${timestamp}`;
@@ -126,6 +139,7 @@ router.post('/status', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
 
