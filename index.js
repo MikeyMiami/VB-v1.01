@@ -25,6 +25,8 @@ const testRoute = require('./routes/test');
 const { runAutopilot } = require('./utils/autopilot');
 const botControlRoutes = require('./routes/bot-control');
 const { router: logStreamRouter } = require('./routes/queue/logs');
+app.use('/calendar', require('./routes/calendar'));
+
 
 
 
