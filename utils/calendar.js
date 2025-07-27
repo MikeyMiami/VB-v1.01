@@ -2,26 +2,57 @@
 const { google } = require('googleapis');
 const db = require('../db');
 
-async function createCalendarEvent(agentId, recipientEmail, time, title, durationMinutes = 30) {
-  const { rows } = await db.query(`SELECT tokens FROM Agents WHERE id = $1`, [agentId]);
+// Get Google Calendar client using stored token
+async function getGoogleCalendarClient(agentId) {
+  const { rows } = await db.query(`SELECT calendar_token FROM Agents WHERE id = $1`, [agentId]);
+  if (!rows.length || !rows[0].calendar_token) throw new Error('No calendar token found');
+
+  const tokens = JSON.parse(rows[0].calendar_token);
+
+  const oAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+
+  oAuth2Client.setCredentials(tokens);
+
+  // Automatically refresh token if needed
+  oAuth2Client.on('tokens', async (newTokens) => {
+    if (newTokens.refresh_token || newTokens.access_token) {
+      const updated = { ...tokens, ...newTokens };
+      await db.query(
+        `UPDATE Agents SET calendar_token = $1 WHERE id = $2`,
+        [JSON.stringify(updated), agentId]
+      );
+    }
+  });
+
+  return google.calendar({ version: 'v3', auth: oAuth2Client });
+}
+
+// Create event using agent’s custom settings
+async function createCalendarEvent(agentId, recipientEmail, startTimeISO) {
+  const { rows } = await db.query(
+    `SELECT meeting_title_template, meeting_duration_minutes, timezone, calendar_token FROM Agents WHERE id = $1`,
+    [agentId]
+  );
+
   if (!rows.length) throw new Error('Agent not found');
+  const agent = rows[0];
 
-  const tokens = rows[0].tokens;
-  if (!tokens || !tokens.access_token) throw new Error('Missing Google access token');
+  const calendar = await getGoogleCalendarClient(agentId);
 
-  const oAuth2Client = new google.auth.OAuth2();
-  oAuth2Client.setCredentials({ access_token: tokens.access_token });
+  const startTime = new Date(startTimeISO);
+  const endTime = new Date(startTime.getTime() + (agent.meeting_duration_minutes || 30) * 60000);
 
-  const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
-
-  const startTime = new Date(time);
-  const endTime = new Date(startTime.getTime() + durationMinutes * 60000);
+  const summary = agent.meeting_title_template || 'Appointment with AI Agent';
 
   const event = {
-    summary: title || 'Appointment with AI Agent',
-    start: { dateTime: startTime.toISOString() },
-    end: { dateTime: endTime.toISOString() },
-    attendees: [{ email: recipientEmail }],
+    summary,
+    start: { dateTime: startTime.toISOString(), timeZone: agent.timezone || 'America/New_York' },
+    end: { dateTime: endTime.toISOString(), timeZone: agent.timezone || 'America/New_York' },
+    attendees: recipientEmail ? [{ email: recipientEmail }] : [],
   };
 
   try {
@@ -38,4 +69,7 @@ async function createCalendarEvent(agentId, recipientEmail, time, title, duratio
   }
 }
 
-module.exports = { createCalendarEvent };
+module.exports = {
+  getGoogleCalendarClient,
+  createCalendarEvent,
+};
