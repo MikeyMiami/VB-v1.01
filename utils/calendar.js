@@ -2,17 +2,16 @@
 const { google } = require('googleapis');
 const db = require('../db');
 
-// Get Google Calendar client using stored token
-async function getGoogleCalendarClient(agentId) {
-  const { rows } = await db.query(`SELECT calendar_token FROM Agents WHERE id = $1`, [agentId]);
-  if (!rows.length || !rows[0].calendar_token) throw new Error('No calendar token found');
+async function createCalendarEvent(agentId, recipientEmail, startTime) {
+  // 1. Fetch agent token from DB
+  const result = await db.query(`SELECT calendar_token, meeting_title_template, meeting_duration_minutes, timezone FROM Agents WHERE id = $1`, [agentId]);
+  const agent = result.rows[0];
 
-  let tokens;
-  try {
-    tokens = JSON.parse(rows[0].calendar_token);
-  } catch (e) {
-    throw new Error('Invalid token format in database');
-  }
+  if (!agent || !agent.calendar_token) throw new Error('Agent credentials missing');
+
+  const tokens = typeof agent.calendar_token === 'string'
+    ? JSON.parse(agent.calendar_token)
+    : agent.calendar_token;
 
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -22,77 +21,41 @@ async function getGoogleCalendarClient(agentId) {
 
   oAuth2Client.setCredentials(tokens);
 
-  // Automatically refresh token if needed
-  oAuth2Client.on('tokens', async (newTokens) => {
-    if (newTokens.refresh_token || newTokens.access_token) {
-      const updated = { ...tokens, ...newTokens };
-      await db.query(
-        `UPDATE Agents SET calendar_token = $1 WHERE id = $2`,
-        [JSON.stringify(updated), agentId]
-      );
-      console.log(`🔁 Refreshed and updated calendar token for agent ${agentId}`);
-    }
-  });
+  // 2. Refresh access token if needed
+  try {
+    const refreshed = await oAuth2Client.getAccessToken(); // Refresh if expired
+    tokens.access_token = refreshed.token;
 
-  return google.calendar({ version: 'v3', auth: oAuth2Client });
-}
+    // Optional: save refreshed token back to DB
+    await db.query(`UPDATE Agents SET calendar_token = $1 WHERE id = $2`, [JSON.stringify(tokens), agentId]);
+  } catch (refreshErr) {
+    console.error('❌ Failed to refresh access token:', refreshErr);
+    throw new Error('Failed to refresh access token');
+  }
 
-// Create event using agent’s custom settings
-async function createCalendarEvent(agentId, recipientEmail, startTimeISO) {
-  const { rows } = await db.query(
-    `SELECT meeting_title_template, meeting_duration_minutes, timezone, calendar_token FROM Agents WHERE id = $1`,
-    [agentId]
-  );
+  // 3. Create event
+  const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
 
-  if (!rows.length) throw new Error('Agent not found');
-  const agent = rows[0];
+  const duration = agent.meeting_duration_minutes || 30;
+  const title = agent.meeting_title_template || 'Appointment';
 
-  const calendar = await getGoogleCalendarClient(agentId);
-
-  const startTime = new Date(startTimeISO);
-  const endTime = new Date(startTime.getTime() + (agent.meeting_duration_minutes || 30) * 60000);
-
-  const summary = agent.meeting_title_template || 'Appointment with AI Agent';
+  const start = new Date(startTime);
+  const end = new Date(start.getTime() + duration * 60000);
 
   const event = {
-    summary,
-    start: { dateTime: startTime.toISOString(), timeZone: agent.timezone || 'America/New_York' },
-    end: { dateTime: endTime.toISOString(), timeZone: agent.timezone || 'America/New_York' },
-    attendees: recipientEmail ? [{ email: recipientEmail }] : [],
+    summary: title,
+    start: { dateTime: start.toISOString(), timeZone: agent.timezone || 'America/New_York' },
+    end: { dateTime: end.toISOString(), timeZone: agent.timezone || 'America/New_York' },
+    attendees: [{ email: recipientEmail }],
   };
 
-  try {
-    const result = await calendar.events.insert({
-      calendarId: 'primary',
-      resource: event,
-    });
+  const resultEvent = await calendar.events.insert({
+    calendarId: 'primary',
+    resource: event,
+  });
 
-    console.log('📆 Event created:', result.data.id);
-    return result.data;
-  } catch (err) {
-    console.error('❌ Google Calendar error:', err.message);
-    throw err;
-  }
+  return resultEvent.data;
 }
 
-// Optional debug tool: log calendar token
-async function debugAgentCalendarTokens(agentId) {
-  const { rows } = await db.query(`SELECT calendar_token FROM Agents WHERE id = $1`, [agentId]);
-  if (!rows.length) {
-    console.warn(`⚠️ No agent found with ID ${agentId}`);
-    return;
-  }
+module.exports = { createCalendarEvent };
 
-  try {
-    const token = JSON.parse(rows[0].calendar_token);
-    console.log(`🛠️ Calendar token for agent ${agentId}:`, token);
-  } catch (e) {
-    console.error(`❌ Failed to parse token for agent ${agentId}:`, e.message);
-  }
-}
-
-module.exports = {
-  getGoogleCalendarClient,
-  createCalendarEvent,
-  debugAgentCalendarTokens, // exported for optional use
-};
