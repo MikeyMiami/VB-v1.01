@@ -28,7 +28,7 @@
     "jsonwebtoken": "^9.0.2",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.10.2",
-    "pg": "^8.11.1"
+    "pg": "^8.11.1",
+    "moment-timezone": "^0.5.45"
   }
 }
-
