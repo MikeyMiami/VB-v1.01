@@ -150,5 +150,52 @@ router.get('/logs', async (req, res) => {
   }
 });
 
+// ✅ /queue/status — Returns agent queue summary
+router.get('/status', async (req, res) => {
+  const { agentId } = req.query;
+  if (!agentId) return res.status(400).json({ error: 'Missing agentId' });
+
+  try {
+    const { rows } = await db.query(`SELECT * FROM Agents WHERE id = $1`, [agentId]);
+    const agent = rows[0];
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+    const now = dayjs();
+    const currentHour = now.hour();
+    const currentDay = now.format('dddd').toLowerCase();
+    const callDays = JSON.parse(agent.call_days || '[]');
+    const isTodayAllowed = callDays.includes(currentDay);
+    const isHourAllowed = currentHour >= agent.call_time_start && currentHour < agent.call_time_end;
+
+    // Count calls made today
+    const result = await db.query(
+      `SELECT COUNT(*) FROM CallAttempts WHERE agentId = $1 AND DATE(createdDate) = CURRENT_DATE`,
+      [agentId]
+    );
+    const dailyCallsMade = parseInt(result.rows[0].count) || 0;
+
+    const status = {
+      isActive: agent.active,
+      currentTime: now.format('YYYY-MM-DD HH:mm:ss'),
+      today: currentDay,
+      hour: currentHour,
+      nextAllowedCallTime: isTodayAllowed
+        ? (isHourAllowed ? 'now' : `between ${agent.call_time_start}:00–${agent.call_time_end}:00`)
+        : 'not today',
+      dailyCallsMade,
+      dailyCallLimit: agent.dial_limit,
+      minutesUsedThisMonth: agent.minutes_used || 0,
+      maxMonthlyMinutes: agent.max_monthly_minutes || 0,
+    };
+
+    return res.status(200).json({ status });
+
+  } catch (err) {
+    console.error('❌ Error getting agent queue status:', err.message);
+    return res.status(500).json({ error: 'Failed to retrieve status' });
+  }
+});
+
+
 module.exports = router;
 
