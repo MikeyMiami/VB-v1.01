@@ -23,6 +23,8 @@ const sheetsRoutes = require('./routes/sheets');
 const debugRoutes = require('./routes/debug');
 const testRoute = require('./routes/test');
 const { runAutopilot } = require('./utils/autopilot');
+const botControlRoutes = require('./routes/bot-control');
+
 
 
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
