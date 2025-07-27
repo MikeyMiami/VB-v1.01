@@ -168,6 +168,8 @@ app.use('/debug', debugRoutes);
 app.use('/', testRoute);
 app.use('/bot', botControlRoutes);
 app.use('/queue/log-stream', logStreamRouter);
+app.use('/calendar', require('./routes/calendar-save'));
+
 
 
 // ⏰ Every 60 seconds (once a minute)
