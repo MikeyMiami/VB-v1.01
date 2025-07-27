@@ -47,7 +47,6 @@ const redisConnection = {
 const call = new ('calls', { connection: redisConnection });
 
 // cron addition auto
-const { Queue } = require('bullmq');
 const redisConnection = {
   host: process.env.REDIS_HOST || 'localhost',
   port: Number(process.env.REDIS_PORT) || 6379,
