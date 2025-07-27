@@ -5,7 +5,6 @@ const twilio = require('twilio');
 const dayjs = require('dayjs');
 const { logAgentQueue } = require('./utils/queueLogger');
 
-
 const QUEUE_NAME = 'call-lead';
 const connection = {
   host: process.env.REDIS_HOST || '127.0.0.1',
@@ -26,11 +25,15 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
   // ✅ Call time/day enforcement
   const allowedDays = JSON.parse(agent.call_days || '[]');
   if (!allowedDays.includes(currentDay)) {
-    console.log(`⏸️ Skipping call - ${currentDay} is not in agent's allowed days`);
+    const msg = `⏸️ Skipping call - ${currentDay} is not in agent's allowed days`;
+    console.log(msg);
+    await logAgentQueue(agent.id, msg);
     return;
   }
   if (currentHour < agent.call_time_start || currentHour >= agent.call_time_end) {
-    console.log(`⏸️ Skipping call - outside call hours (${currentHour}h)`);
+    const msg = `⏸️ Skipping call - outside call hours (${currentHour}h)`;
+    console.log(msg);
+    await logAgentQueue(agent.id, msg);
     return;
   }
 
@@ -43,12 +46,16 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
     const dialCount = parseInt(result.rows[0].count) || 0;
 
     if (dialCount >= agent.dial_limit) {
-      console.log(`⚠️ Dial limit reached (${dialCount}/${agent.dial_limit})`);
+      const msg = `⚠️ Dial limit reached (${dialCount}/${agent.dial_limit})`;
+      console.log(msg);
+      await logAgentQueue(agent.id, msg);
       return;
     }
 
-    // ✅ Get the correct Twilio number
     const fromNumber = agent?.twilio_number || process.env.TWILIO_NUMBER;
+    const msgStart = `📞 Initiating call to ${lead.phone} from agent ${agent.name}`;
+    console.log(msgStart);
+    await logAgentQueue(agent.id, msgStart);
 
     const call = await client.calls.create({
       to: lead.phone,
@@ -59,17 +66,20 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
       statusCallbackEvent: ['completed']
     });
 
-    // Log to CallAttempts
     await db.query(
       `INSERT INTO CallAttempts (agentId, leadPhone, status, call_sid, createdDate)
        VALUES ($1, $2, $3, $4, NOW())`,
       [agent.id, lead.phone, 'initiated', call.sid]
     );
 
-    console.log(`📞 Called ${lead.phone} from agent ${agent.name}`);
+    const msgSuccess = `✅ Call initiated: ${lead.phone}`;
+    console.log(msgSuccess);
+    await logAgentQueue(agent.id, msgSuccess);
 
   } catch (err) {
-    console.error(`❌ Call failed for ${lead.phone}:`, err.message);
+    const failMsg = `❌ Call failed for ${lead.phone}: ${err.message}`;
+    console.error(failMsg);
+    await logAgentQueue(agent.id, failMsg);
 
     try {
       await db.query(
@@ -90,3 +100,4 @@ callWorker.on('completed', (job) => {
 callWorker.on('failed', (job, err) => {
   console.error(`❌ Job failed for lead: ${job.id}`, err.message);
 });
+
