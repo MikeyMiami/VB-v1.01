@@ -46,13 +46,14 @@ const redisConnection = {
 };
 const call = new ('calls', { connection: redisConnection });
 
-// 🕒 AUTOPILOT CRON JOB
-const runAutopilot = require('./cron/autopilot');
+// cron addition auto
+const { Queue } = require('bullmq');
+const redisConnection = {
+  host: process.env.REDIS_HOST || 'localhost',
+  port: Number(process.env.REDIS_PORT) || 6379,
+};
 
-cron.schedule('*/10 * * * *', async () => {
-  console.log('🔁 Running autopilot...');
-  await runAutopilot();
-});
+const callQueue = new Queue('calls', { connection: redisConnection });
 
 // Worker to process calls
 new Worker('calls', async job => {
