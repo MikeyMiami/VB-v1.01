@@ -1,7 +1,7 @@
-/// worker.js
+// worker.js
 const { Worker } = require('bullmq');
 const db = require('./db'); // ✅ Use shared db.js file
-const { initiateCall } = require('./utils/twilio');
+const twilio = require('twilio');
 const dayjs = require('dayjs');
 
 const QUEUE_NAME = 'call-lead';
@@ -12,11 +12,10 @@ const connection = {
 
 console.log('✅ Worker connected to Redis queue:', QUEUE_NAME);
 
+const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+
 const callWorker = new Worker(QUEUE_NAME, async (job) => {
-  const {
-    lead,
-    agent,
-  } = job.data;
+  const { lead, agent } = job.data;
 
   const now = dayjs();
   const currentHour = now.hour();
@@ -46,8 +45,17 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
       return;
     }
 
-    // ✅ Make the call
-    const call = await initiateCall(lead.phone, agent.id);
+    // ✅ Get the correct Twilio number
+    const fromNumber = agent?.twilio_number || process.env.TWILIO_NUMBER;
+
+    const call = await client.calls.create({
+      to: lead.phone,
+      from: fromNumber,
+      url: `https://${process.env.SERVER_DOMAIN}/voice/handler?agentId=${agent.id}&leadId=${lead.id}`,
+      statusCallback: `https://${process.env.SERVER_DOMAIN}/voice/status`,
+      statusCallbackMethod: 'POST',
+      statusCallbackEvent: ['completed']
+    });
 
     // Log to CallAttempts
     await db.query(
@@ -80,6 +88,3 @@ callWorker.on('completed', (job) => {
 callWorker.on('failed', (job, err) => {
   console.error(`❌ Job failed for lead: ${job.id}`, err.message);
 });
-
-
-
