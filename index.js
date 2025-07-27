@@ -44,7 +44,16 @@ const redisConnection = {
   port: process.env.REDIS_PORT || 6379,
   password: process.env.REDIS_PASSWORD
 };
-const callQueue = new Queue('calls', { connection: redisConnection });
+const call = new ('calls', { connection: redisConnection });
+
+// 🕒 AUTOPILOT CRON JOB
+const cron = require('node-cron');
+const runAutopilot = require('./cron/autopilot');
+
+cron.schedule('*/10 * * * *', async () => {
+  console.log('🔁 Running autopilot...');
+  await runAutopilot();
+});
 
 // Worker to process calls
 new Worker('calls', async job => {
