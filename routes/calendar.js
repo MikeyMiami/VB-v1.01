@@ -7,6 +7,8 @@ const { createCalendarEvent } = require('../utils/calendar');
 // POST /calendar/create (live agent-based logic)
 router.post('/create', async (req, res) => {
   const { agentId, recipientEmail, startTime } = req.body;
+  console.log('💡 Request headers:', req.headers);
+  console.log('💡 Request body:', req.body);
 
   if (!agentId || !startTime) {
     return res.status(400).json({ error: 'Missing required fields: agentId or startTime' });
