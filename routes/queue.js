@@ -129,5 +129,26 @@ router.post('/stop', async (req, res) => {
   }
 });
 
+// ✅ /queue/logs — Returns recent logs for agent
+router.get('/logs', async (req, res) => {
+  const { agentId } = req.query;
+  if (!agentId) return res.status(400).json({ error: 'Missing agentId' });
+
+  try {
+    const result = await db.query(
+      `SELECT message, created_at FROM AgentQueueLogs
+       WHERE agentId = $1
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [agentId]
+    );
+
+    return res.status(200).json({ logs: result.rows });
+  } catch (err) {
+    console.error('❌ Error fetching logs:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch logs.' });
+  }
+});
+
 module.exports = router;
 
