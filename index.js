@@ -57,6 +57,14 @@ cron.schedule('*/10 * * * *', async () => {
   await runAutopilot();
 });
 
+// ⏰ Every 60 seconds (once a minute)
+const runAgentUsageReset = require('./jobs/resetAgentUsage');
+
+setInterval(() => {
+  runAgentUsageReset();
+}, 60 * 1000);
+
+
 // Worker to process calls
 new Worker('calls', async job => {
   const { botId, phone, contactId } = job.data;
