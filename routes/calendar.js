@@ -4,13 +4,17 @@ const router = express.Router();
 const { google } = require('googleapis');
 const { createCalendarEvent } = require('../utils/calendar');
 
-// POST /calendar/create (live agent-based logic)
+// POST /calendar/create (Production Logic)
 router.post('/create', async (req, res) => {
-  const { agentId, recipientEmail, startTime } = req.body;
-  console.log('💡 Request headers:', req.headers);
-  console.log('💡 Request body:', req.body);
+  const body = req.body || {};
+  const { agentId, recipientEmail, startTime } = body;
+
+  console.log('💡 Incoming request to /calendar/create');
+  console.log('📦 Headers:', req.headers);
+  console.log('📦 Body:', body);
 
   if (!agentId || !startTime) {
+    console.warn('⚠️ Missing agentId or startTime in body:', body);
     return res.status(400).json({ error: 'Missing required fields: agentId or startTime' });
   }
 
@@ -23,29 +27,30 @@ router.post('/create', async (req, res) => {
   }
 });
 
-// 🔧 TEMP MANUAL TEST: POST /calendar/test-create
+// 🔧 TEMP: Manual Test Without Database or Agent Lookup
 router.post('/test-create', async (req, res) => {
-  const { recipientEmail, startTime, title } = req.body;
+  const body = req.body || {};
+  const { recipientEmail, startTime, title } = body;
 
   if (!recipientEmail || !startTime) {
     return res.status(400).json({ error: 'Missing recipientEmail or startTime' });
   }
 
   const oAuth2Client = new google.auth.OAuth2(
-    '', // Client ID not needed for manual test
-    '', // Client Secret not needed for manual test
-    ''  // Redirect URI not needed for manual test
+    process.env.GOOGLE_CLIENT_ID || '',
+    process.env.GOOGLE_CLIENT_SECRET || '',
+    process.env.GOOGLE_REDIRECT_URI || ''
   );
 
   oAuth2Client.setCredentials({
-    access_token: 'ya29.a0AS3H6NyWKsSD5mHEEYRuoxyAm4tYlBuntfMJgx850jVpf4rwncP6oBw-Usd4sMQt9-pT1MW5fTg260jq3QYsYYrqGlcEtMXXuGvI8k5KGFwGPVuBToEPWxt9KGSoBWJPfbolxzhpD9nMS1-PFp3y3rotMPO23m_JDDIY_nndaCgYKAbcSARMSFQHGX2MiAXaDGm3Lqq1LZGnfNhTjAg0175',
-    refresh_token: '1//04DVVft3AuRzTCgYIARAAGAQSNwF-L9Ir9SmsESRCunRfBlsv9qI_z3wsrdlx2tFds8jGE3Ra-y29-gB7fGVy_sEOneIJnH_jYPk'
+    access_token: process.env.TEST_GOOGLE_ACCESS_TOKEN || '',
+    refresh_token: process.env.TEST_GOOGLE_REFRESH_TOKEN || ''
   });
 
   const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
 
   const start = new Date(startTime);
-  const end = new Date(start.getTime() + 30 * 60000); // default 30 min
+  const end = new Date(start.getTime() + 30 * 60000); // default 30 minutes
 
   const event = {
     summary: title || 'Test Appointment with Mikey',
@@ -68,11 +73,12 @@ router.post('/test-create', async (req, res) => {
   }
 });
 
+// Catch-all for unmatched routes (for debugging)
 router.use((req, res, next) => {
-  console.log('⚠️ Unmatched route hit:', req.method, req.originalUrl);
+  console.log('⚠️ Unmatched calendar route hit:', req.method, req.originalUrl);
   next();
 });
 
-
 module.exports = router;
+
 
