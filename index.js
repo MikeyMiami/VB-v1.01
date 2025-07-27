@@ -1,4 +1,4 @@
-// index.js (Updated: Fixed media JSON format to match working Deepgram example - added 'track', 'chunk', 'timestamp' inside media, removed top-level sequenceNumber/timestamp)
+// index.js (Updated: Fixed invalid Queue instantiation)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -23,7 +23,6 @@ const sheetsRoutes = require('./routes/sheets');
 const debugRoutes = require('./routes/debug');
 const testRoute = require('./routes/test');
 
-
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 
 fluentFfmpeg.setFfmpegPath(require('ffmpeg-static'));
@@ -44,15 +43,14 @@ const redisConnection = {
   port: process.env.REDIS_PORT || 6379,
   password: process.env.REDIS_PASSWORD
 };
-const call = new ('calls', { connection: redisConnection });
+
+const callQueue = new Queue('calls', { connection: redisConnection });
 
 // cron addition auto
 cron.schedule('*/10 * * * *', async () => {
   console.log('🔁 Running autopilot...');
   await runAutopilot();
 });
-
-const callQueue = new Queue('calls', { connection: redisConnection });
 
 // Worker to process calls
 new Worker('calls', async job => {
