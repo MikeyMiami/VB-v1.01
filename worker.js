@@ -1,4 +1,4 @@
-// worker.js
+/// worker.js
 const { Worker } = require('bullmq');
 const db = require('./db'); // ✅ Use shared db.js file
 const { initiateCall } = require('./utils/twilio');
