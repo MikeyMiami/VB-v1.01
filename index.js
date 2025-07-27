@@ -164,6 +164,8 @@ app.use('/notes', require('./routes/notes'));
 app.use('/sheets', sheetsRoutes);
 app.use('/debug', debugRoutes);
 app.use('/', testRoute);
+app.use('/bot', botControlRoutes);
+
 
 
 
