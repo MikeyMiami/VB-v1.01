@@ -37,8 +37,8 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
     return;
   }
 
-  // ✅ Check dial limits for the day
   try {
+    // ✅ Check dial limits for the day
     const result = await db.query(
       `SELECT COUNT(*) FROM CallAttempts WHERE agentId = $1 AND DATE(createdDate) = CURRENT_DATE`,
       [agent.id]
@@ -52,10 +52,16 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
       return;
     }
 
+    // ✅ Check monthly minutes usage
+    if (agent.minutes_used >= agent.max_monthly_minutes) {
+      const msg = `⚠️ Max monthly minutes reached (${agent.minutes_used}/${agent.max_monthly_minutes})`;
+      console.log(msg);
+      await logAgentQueue(agent.id, msg);
+      return;
+    }
+
+    // ✅ Get the correct Twilio number
     const fromNumber = agent?.twilio_number || process.env.TWILIO_NUMBER;
-    const msgStart = `📞 Initiating call to ${lead.phone} from agent ${agent.name}`;
-    console.log(msgStart);
-    await logAgentQueue(agent.id, msgStart);
 
     const call = await client.calls.create({
       to: lead.phone,
@@ -66,20 +72,21 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
       statusCallbackEvent: ['completed']
     });
 
+    // ✅ Log to CallAttempts
     await db.query(
       `INSERT INTO CallAttempts (agentId, leadPhone, status, call_sid, createdDate)
        VALUES ($1, $2, $3, $4, NOW())`,
       [agent.id, lead.phone, 'initiated', call.sid]
     );
 
-    const msgSuccess = `✅ Call initiated: ${lead.phone}`;
-    console.log(msgSuccess);
-    await logAgentQueue(agent.id, msgSuccess);
+    const msg = `📞 Called ${lead.phone} from agent ${agent.name}`;
+    console.log(msg);
+    await logAgentQueue(agent.id, msg);
 
   } catch (err) {
-    const failMsg = `❌ Call failed for ${lead.phone}: ${err.message}`;
-    console.error(failMsg);
-    await logAgentQueue(agent.id, failMsg);
+    const errorMsg = `❌ Call failed for ${lead.phone}: ${err.message}`;
+    console.error(errorMsg);
+    await logAgentQueue(agent.id, errorMsg);
 
     try {
       await db.query(
@@ -88,7 +95,9 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
         [agent.id, lead.phone, 'failed']
       );
     } catch (logErr) {
-      console.error('❌ Failed to log failed call attempt:', logErr.message);
+      const logErrorMsg = '❌ Failed to log failed call attempt: ' + logErr.message;
+      console.error(logErrorMsg);
+      await logAgentQueue(agent.id, logErrorMsg);
     }
   }
 }, { connection });
