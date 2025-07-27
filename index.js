@@ -24,6 +24,7 @@ const debugRoutes = require('./routes/debug');
 const testRoute = require('./routes/test');
 const { runAutopilot } = require('./utils/autopilot');
 const botControlRoutes = require('./routes/bot-control');
+const { router: logStreamRouter } = require('./routes/queue/logs');
 
 
 
@@ -165,6 +166,7 @@ app.use('/sheets', sheetsRoutes);
 app.use('/debug', debugRoutes);
 app.use('/', testRoute);
 app.use('/bot', botControlRoutes);
+app.use('/queue/log-stream', logStreamRouter);
 
 
 
