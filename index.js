@@ -57,13 +57,6 @@ cron.schedule('*/10 * * * *', async () => {
   await runAutopilot();
 });
 
-// ⏰ Every 60 seconds (once a minute)
-const runAgentUsageReset = require('./jobs/resetAgentUsage');
-
-setInterval(() => {
-  runAgentUsageReset();
-}, 60 * 1000);
-
 
 // Worker to process calls
 new Worker('calls', async job => {
@@ -177,7 +170,12 @@ app.use('/bot', botControlRoutes);
 app.use('/queue/log-stream', logStreamRouter);
 
 
+// ⏰ Every 60 seconds (once a minute)
+const runAgentUsageReset = require('./jobs/resetAgentUsage');
 
+setInterval(() => {
+  runAgentUsageReset();
+}, 60 * 1000);
 
 // ✅ Debug route
 app.get('/debug-route', (req, res) => {
