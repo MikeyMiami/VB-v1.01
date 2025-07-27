@@ -1,4 +1,3 @@
-// worker.js
 const { Worker } = require('bullmq');
 const db = require('./db'); // ✅ Use shared db.js file
 const twilio = require('twilio');
@@ -30,6 +29,7 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
     await logAgentQueue(agent.id, msg);
     return;
   }
+
   if (currentHour < agent.call_time_start || currentHour >= agent.call_time_end) {
     const msg = `⏸️ Skipping call - outside call hours (${currentHour}h)`;
     console.log(msg);
@@ -63,6 +63,10 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
     // ✅ Get the correct Twilio number
     const fromNumber = agent?.twilio_number || process.env.TWILIO_NUMBER;
 
+    const msgDialing = `📞 Calling ${lead.phone} from ${fromNumber}`;
+    console.log(msgDialing);
+    await logAgentQueue(agent.id, msgDialing);
+
     const call = await client.calls.create({
       to: lead.phone,
       from: fromNumber,
@@ -79,7 +83,7 @@ const callWorker = new Worker(QUEUE_NAME, async (job) => {
       [agent.id, lead.phone, 'initiated', call.sid]
     );
 
-    const msg = `📞 Called ${lead.phone} from agent ${agent.name}`;
+    const msg = `✅ Call initiated to ${lead.phone} (Call SID: ${call.sid})`;
     console.log(msg);
     await logAgentQueue(agent.id, msg);
 
