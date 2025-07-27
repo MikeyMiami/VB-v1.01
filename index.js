@@ -47,10 +47,10 @@ const redisConnection = {
 const call = new ('calls', { connection: redisConnection });
 
 // cron addition auto
-const redisConnection = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: Number(process.env.REDIS_PORT) || 6379,
-};
+cron.schedule('*/10 * * * *', async () => {
+  console.log('🔁 Running autopilot...');
+  await runAutopilot();
+});
 
 const callQueue = new Queue('calls', { connection: redisConnection });
 
