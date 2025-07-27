@@ -68,5 +68,11 @@ router.post('/test-create', async (req, res) => {
   }
 });
 
+router.use((req, res, next) => {
+  console.log('⚠️ Unmatched route hit:', req.method, req.originalUrl);
+  next();
+});
+
+
 module.exports = router;
 
