@@ -25,7 +25,6 @@ const testRoute = require('./routes/test');
 const { runAutopilot } = require('./utils/autopilot');
 const botControlRoutes = require('./routes/bot-control');
 const { router: logStreamRouter } = require('./routes/queue/logs');
-app.use('/calendar', require('./routes/calendar'));
 
 
 
@@ -35,6 +34,16 @@ const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 fluentFfmpeg.setFfmpegPath(require('ffmpeg-static'));
 
 dotenv.config();
+
+// ✅ Middleware (moved near top for JSON parsing to work)
+app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Added to parse Twilio callbacks
+app.use(cors());
+app.options('*', cors());
+
+// ✅ Routes: calendar routes (fixed order and conflict)
+app.use('/calendar', require('./routes/calendar'));       // handles /calendar/create and /calendar/test-create
+app.use('/calendar/save', require('./routes/calendar-save')); // handles /calendar/save/save-tokens
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -170,7 +179,6 @@ app.use('/debug', debugRoutes);
 app.use('/', testRoute);
 app.use('/bot', botControlRoutes);
 app.use('/queue/log-stream', logStreamRouter);
-app.use('/calendar-auth', require('./routes/calendar-save'));
 
 
 
@@ -608,6 +616,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+
 
 
 
