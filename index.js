@@ -156,12 +156,6 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-// ✅ Middleware (duplication retained)
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(cors());
-app.options('*', cors());
-
 // ✅ Static audio files
 app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
 
