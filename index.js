@@ -1,4 +1,3 @@
---- FILE: index.js ---
 // index.js (Updated: Fixed invalid Queue instantiation)
 const express = require('express');
 const app = express();
