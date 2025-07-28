@@ -1,4 +1,4 @@
-// index.js (Updated: Fixed invalid Queue instantiation)
+// index.js (Postgres migration)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -17,7 +17,7 @@ const cron = require('node-cron');
 const { Queue, Worker } = require('bullmq');
 const jwt = require('jsonwebtoken');
 const twilio = require('twilio');
-const db = require('./db'); // SQLite DB
+const db = require('./db'); // Postgres pool
 const { fetchLeads, bookAppointment } = require('./utils/integrations');
 const sheetsRoutes = require('./routes/sheets');
 const debugRoutes = require('./routes/debug');
@@ -25,9 +25,6 @@ const testRoute = require('./routes/test');
 const { runAutopilot } = require('./utils/autopilot');
 const botControlRoutes = require('./routes/bot-control');
 const { router: logStreamRouter } = require('./routes/queue/logs');
-
-
-
 
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 
@@ -42,7 +39,7 @@ app.use(cors());
 app.options('*', cors());
 
 // ✅ Routes: calendar routes (fixed order and conflict)
-app.use('/calendar', require('./routes/calendar'));       // handles /calendar/create and /calendar/test-create
+app.use('/calendar', require('./routes/calendar'));         // handles /calendar/create and /calendar/test-create
 app.use('/calendar/save', require('./routes/calendar-save')); // handles /calendar/save/save-tokens
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -53,6 +50,7 @@ if (!fs.existsSync(audioDir)) {
   fs.mkdirSync(audioDir, { recursive: true });
 }
 
+//part 2
 // Call Queue (BullMQ with Redis)
 const redisConnection = {
   host: process.env.REDIS_HOST || 'localhost',
@@ -68,15 +66,16 @@ cron.schedule('*/10 * * * *', async () => {
   await runAutopilot();
 });
 
-
 // Worker to process calls
 new Worker('calls', async job => {
   const { botId, phone, contactId } = job.data;
-  let agent;
-  db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, row) => {
-    if (err || !row || !row.active) return;
-    agent = row;
-  });
+
+  // fetch agent from Postgres
+  const { rows: agentRows } = await db.query(
+    'SELECT * FROM Agents WHERE id = $1', [botId]
+  );
+  const agent = agentRows[0];
+  if (!agent || !agent.active) return;
 
   const canDial = await canDialContact(botId, phone);
   if (!canDial) return;
@@ -90,40 +89,58 @@ new Worker('calls', async job => {
       statusCallbackMethod: 'POST'
     });
 
-    // Update stats
+    // Update stats in Postgres
     const today = new Date().toISOString().split('T')[0];
-    db.get(`SELECT * FROM DashboardStats WHERE botId = ? AND date = ?`, [botId, today], (err, stat) => {
-      if (err) return;
-      const dials = (stat ? stat.dials_count : 0) + 1;
-      if (stat) {
-        db.run(`UPDATE DashboardStats SET dials_count = ? WHERE id = ?`, [dials, stat.id]);
-      } else {
-        db.run(`INSERT INTO DashboardStats (botId, date, dials_count) VALUES (?, ?, 1)`, [botId, today]);
-      }
-    });
+    const { rows: statRows } = await db.query(
+      'SELECT * FROM DashboardStats WHERE botId = $1 AND date = $2',
+      [botId, today]
+    );
+    const stat = statRows[0];
+
+    if (stat) {
+      await db.query(
+        'UPDATE DashboardStats SET dials_count = $1 WHERE id = $2',
+        [stat.dials_count + 1, stat.id]
+      );
+    } else {
+      await db.query(
+        'INSERT INTO DashboardStats (botId, date, dials_count) VALUES ($1, $2, 1)',
+        [botId, today]
+      );
+    }
   } catch (err) {
     console.error('Call processing error:', err);
-    // Optional: job.failed(err.message);
   }
 }, { connection: redisConnection });
 
+//part 3
 // Cron for autopilot (every hour) - Adds to queue
-cron.schedule('0 * * * *', () => {
+cron.schedule('0 * * * *', async () => {
   const now = new Date();
   const day = now.toLocaleString('en-us', { weekday: 'long' }).toLowerCase();
   const hour = now.getHours();
 
-  db.all(`SELECT * FROM Agents WHERE active = 1 AND call_days LIKE '%${day}%'`, [], async (err, activeAgents) => {
-    if (err) return console.error('Cron error:', err);
+  try {
+    const { rows: activeAgents } = await db.query(
+      "SELECT * FROM Agents WHERE active = true AND call_days ILIKE '%' || $1 || '%'",
+      [day]
+    );
+
     for (const agent of activeAgents) {
       if (hour < agent.call_time_start || hour >= agent.call_time_end) continue;
 
       const leads = await fetchLeads(agent.integrationId);
       for (const lead of leads) {
-        await callQueue.add('dial', { botId: agent.id, phone: lead.phone, contactId: lead.id });
+        await callQueue.add('dial', {
+          botId: agent.id,
+          phone: lead.phone,
+          contactId: lead.id
+        });
       }
     }
-  });
+  } catch (err) {
+    console.error('Cron error:', err);
+  }
 });
 
 // Auth Middleware
@@ -139,9 +156,9 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-// ✅ Middleware
+// ✅ Middleware (duplication retained)
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Added to parse Twilio callbacks
+app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 app.options('*', cors());
 
@@ -156,6 +173,7 @@ app.get('/', (req, res) => {
   res.send('✅ Voicebot backend is live and running.');
 });
 
+//part 4
 // ✅ Routes (load AI routes first)
 app.use('/voice-agent/stream', require('./routes/voice-agent-stream'));
 app.use('/voice-agent', require('./routes/voice-agent'));
@@ -169,7 +187,7 @@ app.use('/outbound', require('./routes/outbound'));
 app.use('/twilio-call', require('./routes/twilio-call'));
 app.use('/playback', require('./routes/playback'));
 app.use('/realtime', require('./routes/realtime'));
-app.use('/agents', require('./routes/agents')); // Updated: No authMiddleware here; it's now selective in agents.js
+app.use('/agents', require('./routes/agents')); // selective auth inside
 app.use('/integrations', authMiddleware, require('./routes/integrations'));
 app.use('/post-call-summary', require('./routes/post-call-summary'));
 app.use('/notes', require('./routes/notes'));
@@ -179,8 +197,7 @@ app.use('/', testRoute);
 app.use('/bot', botControlRoutes);
 app.use('/queue/log-stream', logStreamRouter);
 
-
-
+//part 5
 // ⏰ Every 60 seconds (once a minute)
 const runAgentUsageReset = require('./jobs/resetAgentUsage');
 
@@ -204,7 +221,10 @@ app.post('*', (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
-// μ-law to PCM conversion function (pure JS)
+//part 6
+// —————————————
+// μ‑law ↔ PCM & WAV helpers
+// —————————————
 function ulawToPcm(ulawBuffer) {
   const pcm = new Int16Array(ulawBuffer.length);
   for (let i = 0; i < ulawBuffer.length; i++) {
@@ -214,48 +234,44 @@ function ulawToPcm(ulawBuffer) {
     const exponent = (sample >> 4) & 0x07;
     const mantissa = sample & 0x0F;
     let value = (mantissa << (exponent + 3)) + (0x21 << exponent) - 0x21;
-    pcm[i] = sign * value * 4; // Scale to approximate 16-bit range
+    pcm[i] = sign * value * 4;
   }
   return pcm;
 }
 
-// Function to save audio chunk as WAV for debugging
 function saveChunkAsWav(mulawBuffer, filename) {
   const pcm = ulawToPcm(mulawBuffer);
   const wavBuffer = Buffer.alloc(44 + pcm.length * 2);
-  wavBuffer.write('RIFF', 0, 4);
+  wavBuffer.write('RIFF', 0);
   wavBuffer.writeUInt32LE(36 + pcm.length * 2, 4);
-  wavBuffer.write('WAVE', 8, 4);
-  wavBuffer.write('fmt ', 12, 4);
+  wavBuffer.write('WAVE', 8);
+  wavBuffer.write('fmt ', 12);
   wavBuffer.writeUInt32LE(16, 16);
-  wavBuffer.writeUInt16LE(1, 20); // PCM format
-  wavBuffer.writeUInt16LE(1, 22); // Mono
-  wavBuffer.writeUInt32LE(8000, 24); // Sample rate
-  wavBuffer.writeUInt32LE(16000, 28); // Byte rate
-  wavBuffer.writeUInt16LE(2, 32); // Block align
-  wavBuffer.writeUInt16LE(16, 34); // Bits per sample
-  wavBuffer.write('data', 36, 4);
+  wavBuffer.writeUInt16LE(1, 20);
+  wavBuffer.writeUInt16LE(1, 22);
+  wavBuffer.writeUInt32LE(8000, 24);
+  wavBuffer.writeUInt32LE(16000, 28);
+  wavBuffer.writeUInt16LE(2, 32);
+  wavBuffer.writeUInt16LE(16, 34);
+  wavBuffer.write('data', 36);
   wavBuffer.writeUInt32LE(pcm.length * 2, 40);
-  for (let i = 0; i < pcm.length; i++) {
-    wavBuffer.writeInt16LE(pcm[i], 44 + i * 2);
-  }
+  pcm.forEach((val, i) => wavBuffer.writeInt16LE(val, 44 + i * 2));
+
   const fullPath = path.join(audioDir, filename);
   fs.writeFileSync(fullPath, wavBuffer);
   console.log(`Saved audio chunk for debugging: ${fullPath}`);
 }
 
-// Function to generate silence buffer (0.5s of mulaw silence = 4000 bytes of 0xFF)
 function generateSilenceBuffer(durationMs = 500) {
   const sampleRate = 8000;
   const size = (sampleRate * durationMs) / 1000;
-  return Buffer.alloc(size, 0xFF); // mulaw silence is 0xFF
+  return Buffer.alloc(size, 0xFF);
 }
 
-// Function to normalize mulaw amplitude (boost volume)
 function normalizeMulaw(mulawBuffer) {
   let maxAmp = 0;
-  for (let i = 0; i < mulawBuffer.length; i++) {
-    let amp = mulawBuffer[i] - 127; // mulaw centered at 127 for silence
+  for (const byte of mulawBuffer) {
+    const amp = byte - 127;
     maxAmp = Math.max(maxAmp, Math.abs(amp));
   }
   if (maxAmp > 0) {
@@ -263,202 +279,231 @@ function normalizeMulaw(mulawBuffer) {
     for (let i = 0; i < mulawBuffer.length; i++) {
       let amp = mulawBuffer[i] - 127;
       amp = Math.round(amp * scale);
-      mulawBuffer[i] = (amp + 127) & 0xFF; // Clamp to 0-255
+      mulawBuffer[i] = (amp + 127) & 0xFF;
     }
   }
   return mulawBuffer;
 }
 
-// Function to save the full buffered audio as WAV before flushing
 function saveBufferedAudioAsWav(bufferedMulaw, filename) {
   const pcm = ulawToPcm(bufferedMulaw);
   const wavBuffer = Buffer.alloc(44 + pcm.length * 2);
-  wavBuffer.write('RIFF', 0, 4);
+  wavBuffer.write('RIFF', 0);
   wavBuffer.writeUInt32LE(36 + pcm.length * 2, 4);
-  wavBuffer.write('WAVE', 8, 4);
-  wavBuffer.write('fmt ', 12, 4);
+  wavBuffer.write('WAVE', 8);
+  wavBuffer.write('fmt ', 12);
   wavBuffer.writeUInt32LE(16, 16);
-  wavBuffer.writeUInt16LE(1, 20); // PCM format
-  wavBuffer.writeUInt16LE(1, 22); // Mono
-  wavBuffer.writeUInt32LE(8000, 24); // Sample rate
-  wavBuffer.writeUInt32LE(16000, 28); // Byte rate
-  wavBuffer.writeUInt16LE(2, 32); // Block align
-  wavBuffer.writeUInt16LE(16, 34); // Bits per sample
-  wavBuffer.write('data', 36, 4);
+  wavBuffer.writeUInt16LE(1, 20);
+  wavBuffer.writeUInt16LE(1, 22);
+  wavBuffer.writeUInt32LE(8000, 24);
+  wavBuffer.writeUInt32LE(16000, 28);
+  wavBuffer.writeUInt16LE(2, 32);
+  wavBuffer.writeUInt16LE(16, 34);
+  wavBuffer.write('data', 36);
   wavBuffer.writeUInt32LE(pcm.length * 2, 40);
-  for (let i = 0; i < pcm.length; i++) {
-    wavBuffer.writeInt16LE(pcm[i], 44 + i * 2);
-  }
+  pcm.forEach((val, i) => wavBuffer.writeInt16LE(val, 44 + i * 2));
+
   const fullPath = path.join(audioDir, filename);
   fs.writeFileSync(fullPath, wavBuffer);
-  console.log(`Saved buffered audio (longer segment) for debugging: ${fullPath}`);
+  console.log(`Saved buffered audio (longer) for debugging: ${fullPath}`);
 }
 
-wss.on('connection', async (ws, request) => { // Add request param for query
+//part 7
+// Part 7 of 9: WebSocket connection & control events
+wss.on('connection', (ws, request) => {
   console.log('🟢 WebSocket connected');
-  const botId = new URL(request.url, 'http://localhost').searchParams.get('botId'); // Parse botId from query
-  let isTwilio = false;
-  let streamSid = null;
-  let dgConnection = null;
-  let dgConfig = { model: 'nova-2-phonecall', smart_format: true, language: 'en', interim_results: true, utterance_end_ms: 1000, endpointing: 10 }; // Changed model to 'nova-2-phonecall' for phone audio
-  let responding = false; // Flag to prevent overlapping responses
+  const botId = new URL(request.url, 'http://localhost').searchParams.get('botId');
+  let isTwilio = false,
+      streamSid = null,
+      dgConnection = null,
+      responding = false,
+      lastChunkTime = Date.now();
 
-  let lastChunkTime = Date.now();
+  const dgConfig = {
+    model: 'nova-2-phonecall',
+    smart_format: true,
+    language: 'en',
+    interim_results: true,
+    utterance_end_ms: 1000,
+    endpointing: 10
+  };
 
+  // Drive endpointing with silence
   const bufferInterval = setInterval(() => {
-    const now = Date.now();
-    if (now - lastChunkTime > 1000 && dgConnection && dgConnection.getReadyState() === 1) {
-      const silenceBuffer = generateSilenceBuffer();
-      dgConnection.send(silenceBuffer);
-      console.log('Sent 0.5s silence to trigger endpointing on pause');
+    if (dgConnection?.getReadyState() === 1 &&
+        Date.now() - lastChunkTime > 1000) {
+      dgConnection.send(generateSilenceBuffer());
+      console.log('Sent 0.5s silence');
     }
   }, 250);
 
+  // Keep‑alive ping
   const keepAliveInterval = setInterval(() => {
-    if (dgConnection && dgConnection.getReadyState() === 1) {
+    if (dgConnection?.getReadyState() === 1) {
       dgConnection.keepAlive();
       console.log('Sent KeepAlive');
     }
   }, 5000);
 
-  ws.on('message', (msg) => {
+  // Single message handler; Part 8 picks up in the same scope
+  ws.on('message', async msg => {
+    let data;
     try {
-      const data = JSON.parse(msg.toString());
-      if (data.event === 'connected') {
-        isTwilio = true;
-        console.log('Twilio connected');
-        return;
-      } else if (data.event === 'start') {
-        streamSid = data.streamSid;
-        console.log('Twilio stream started, SID:', streamSid);
-        dgConfig.encoding = 'mulaw';
-        dgConfig.sample_rate = 8000;
-        dgConfig.channels = 1;
-        dgConnection = deepgram.listen.live(dgConfig);
-        dgConnection.on(LiveTranscriptionEvents.Open, () => console.log('Deepgram connection open')); // Corrected event names
-        dgConnection.on(LiveTranscriptionEvents.Close, () => console.log('Deepgram connection closed'));
-        dgConnection.on(LiveTranscriptionEvents.Error, (err) => console.error('Deepgram error:', err));
-        dgConnection.on(LiveTranscriptionEvents.UtteranceEnd, (data) => console.log('UtteranceEnd received: ', JSON.stringify(data)));
-        dgConnection.on(LiveTranscriptionEvents.Metadata, (data) => console.log('Metadata received: ', JSON.stringify(data)));
-        dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => { // Changed to Transcript event
-          console.log('Transcript data received: ', JSON.stringify(data));
-          let transcript = data.channel?.alternatives[0]?.transcript?.trim(); // Added trim
-          if (transcript?.length > 0 && data.is_final && data.speech_final && !responding) { // Only process final, complete utterances
-            console.log('📝 Transcript (final):', transcript);
-            responding = true; // Lock to prevent overlaps
-            if (!isTwilio) {
-              ws.send(JSON.stringify({ transcript }));
-            }
-            await streamAiResponse(transcript, ws, isTwilio, streamSid, botId); // Use botId from connection
-            responding = false; // Unlock after done
-          } else {
-            if (transcript?.length > 0) console.log('📝 Interim Transcript (skipped):', transcript);
-            else console.log('No transcript in data');
-          }
-        });
-        return;
-      } else if (data.event === 'media') {
-        if (data.media.track !== 'inbound') {
-          console.log('Skipping non-inbound audio chunk (likely agent output)');
-          return;
-        }
-        const audioBase64 = data.media.payload;
-        const audioBuffer = Buffer.from(audioBase64, 'base64');
-        console.log('Received Twilio inbound audio chunk:', audioBuffer.length);
+      data = JSON.parse(msg.toString());
+    } catch {
+      data = null;
+    }
 
-        // Save for debugging
-        const chunkFilename = `inbound_chunk_${Date.now()}.wav`;
-        saveChunkAsWav(audioBuffer, chunkFilename);
+    if (data?.event === 'connected') {
+      isTwilio = true;
+      console.log('Twilio connected');
+      return;
+    }
 
-        // Normalize and send immediately to Deepgram
-        const normalizedBuffer = normalizeMulaw(audioBuffer);
-        if (dgConnection && dgConnection.getReadyState() === 1) {
-          dgConnection.send(normalizedBuffer);
-          console.log('Sent normalized chunk to Deepgram, length:', normalizedBuffer.length);
-        }
-        lastChunkTime = Date.now();
-        return;
-      } else if (data.event === 'stop') {
-        console.log('Twilio stream stopped');
-        ws.close();
-        return;
-      }
-    } catch (e) {
-      // Browser handling (unchanged)
-      if (!isTwilio) {
-        if (!dgConnection) {
-          dgConfig.encoding = 'linear16';
-          dgConfig.sample_rate = 16000;
-          dgConfig.channels = 1;
-          dgConnection = deepgram.listen.live(dgConfig);
-          // Add event listeners (updated to correct names)
-          dgConnection.on(LiveTranscriptionEvents.Open, () => console.log('Deepgram connection open'));
-          dgConnection.on(LiveTranscriptionEvents.Close, () => console.log('Deepgram connection closed'));
-          dgConnection.on(LiveTranscriptionEvents.Error, (err) => console.error('Deepgram error:', err));
-          dgConnection.on(LiveTranscriptionEvents.UtteranceEnd, (data) => console.log('UtteranceEnd received: ', JSON.stringify(data)));
-          dgConnection.on(LiveTranscriptionEvents.Metadata, (data) => console.log('Metadata received: ', JSON.stringify(data)));
-          dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
-            console.log('Transcript data received: ', JSON.stringify(data));
-            let transcript = data.channel?.alternatives[0]?.transcript?.trim();
-            if (transcript?.length > 0 && data.is_final && data.speech_final && !responding) {
-              console.log('📝 Transcript (final):', transcript);
-              responding = true;
-              if (!isTwilio) {
-                ws.send(JSON.stringify({ transcript }));
+    if (data?.event === 'start') {
+      streamSid = data.streamSid;
+      console.log('Stream started, SID:', streamSid);
+      Object.assign(dgConfig, {
+        encoding: 'mulaw',
+        sample_rate: 8000,
+        channels: 1
+      });
+      dgConnection = deepgram.listen.live(dgConfig);
+      dgConnection
+        .on(LiveTranscriptionEvents.Open,   () => console.log('DG open'))
+        .on(LiveTranscriptionEvents.Close,  () => console.log('DG closed'))
+        .on(LiveTranscriptionEvents.Error,  err => console.error('DG err:', err))
+        .on(LiveTranscriptionEvents.UtteranceEnd,
+            d => console.log('DG UtteranceEnd:', JSON.stringify(d)))
+        .on(LiveTranscriptionEvents.Metadata,
+            d => console.log('DG Metadata:', JSON.stringify(d)))
+        .on(LiveTranscriptionEvents.Transcript,
+            async d => {
+              const t = d.channel?.alternatives?.[0]?.transcript?.trim();
+              if (t && d.is_final && d.speech_final && !responding) {
+                console.log('📝 Transcript:', t);
+                responding = true;
+                if (!isTwilio) ws.send(JSON.stringify({ transcript: t }));
+                await streamAiResponse(t, ws, isTwilio, streamSid, botId);
+                responding = false;
               }
-              await streamAiResponse(transcript, ws, isTwilio, streamSid, botId); // Use botId from connection
-              responding = false;
-            } else {
-              if (transcript?.length > 0) console.log('📝 Interim Transcript (skipped):', transcript);
-              else console.log('No transcript in data');
-            }
-          });
-        }
-        const pcmBuffer = Buffer.from(msg);
-        console.log('Received browser PCM audio chunk:', pcmBuffer.length);
-        if (dgConnection.getReadyState() === 1) {
-          dgConnection.send(pcmBuffer);
-        }
+            });
+      return;
+    }
+
+    // Everything else (media/stop/browser) moves into Part 8
+    // …no duplicate ws.on('message') here…
+  });
+
+//part 8 
+// Part 8 of 9: media, stop, browser audio & close handler
+  ws.on('message', async msg => {
+    let data;
+    try {
+      data = JSON.parse(msg.toString());
+    } catch {
+      data = null;
+    }
+
+    // Twilio media
+    if (data?.event === 'media') {
+      if (data.media.track !== 'inbound') return;
+      const audioBuffer = Buffer.from(data.media.payload, 'base64');
+      console.log('Inbound chunk:', audioBuffer.length);
+      saveChunkAsWav(audioBuffer, `inbound_chunk_${Date.now()}.wav`);
+      const norm = normalizeMulaw(audioBuffer);
+      if (dgConnection?.getReadyState() === 1) {
+        dgConnection.send(norm);
+      }
+      lastChunkTime = Date.now();
+      return;
+    }
+
+    // Twilio stop
+    if (data?.event === 'stop') {
+      console.log('Stream stopped');
+      ws.close();
+      return;
+    }
+
+    // Browser PCM
+    if (!data && !isTwilio) {
+      if (!dgConnection) {
+        Object.assign(dgConfig, {
+          encoding: 'linear16',
+          sample_rate: 16000,
+          channels: 1
+        });
+        dgConnection = deepgram.listen.live(dgConfig);
+        dgConnection
+          .on(LiveTranscriptionEvents.Open,   () => console.log('DG open'))
+          .on(LiveTranscriptionEvents.Close,  () => console.log('DG closed'))
+          .on(LiveTranscriptionEvents.Error,  err => console.error('DG err:', err))
+          .on(LiveTranscriptionEvents.UtteranceEnd,
+              d => console.log('DG UtteranceEnd:', JSON.stringify(d)))
+          .on(LiveTranscriptionEvents.Metadata,
+              d => console.log('DG Metadata:', JSON.stringify(d)))
+          .on(LiveTranscriptionEvents.Transcript,
+              async d => {
+                const t = d.channel?.alternatives?.[0]?.transcript?.trim();
+                if (t && d.is_final && d.speech_final && !responding) {
+                  console.log('📝 Transcript:', t);
+                  responding = true;
+                  ws.send(JSON.stringify({ transcript: t }));
+                  await streamAiResponse(t, ws, isTwilio, streamSid, botId);
+                  responding = false;
+                }
+              });
+      }
+      const pcmBuffer = Buffer.from(msg);
+      if (dgConnection.getReadyState() === 1) {
+        dgConnection.send(pcmBuffer);
       }
     }
   });
 
+  // Close handler (inside the same connection)
   ws.on('close', () => {
-    console.log('🔴 WebSocket closed');
+    console.log('🔴 WS closed');
     clearInterval(keepAliveInterval);
     clearInterval(bufferInterval);
-    if (dgConnection && dgConnection.getReadyState() === 1) {
-      const silenceBuffer = generateSilenceBuffer(1000); // 1s final silence
-      dgConnection.send(silenceBuffer);
-      console.log('Sent final 1s silence on close');
+    if (dgConnection?.getReadyState() === 1) {
+      dgConnection.send(generateSilenceBuffer(1000));
+      dgConnection.finish();
     }
-    if (dgConnection) dgConnection.finish();
   });
-});
+}); // ← closes wss.on('connection')
 
+
+//part 9
+// Part 9 of 9: streamAiResponse & canDialContact (functions + server.listen)
+
+// —————————————
+// streamAiResponse using Postgres
+// —————————————
 async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
   try {
     console.log('Generating AI response for transcript:', transcript);
-    
-    let agent = await new Promise((resolve, reject) => {
-      db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, row) => {
-        if (err) reject(err);
-        resolve(row);
-      });
-    });
+
+    // 1) fetch agent from Postgres
+    const { rows: agentRows } = await db.query(
+      'SELECT * FROM Agents WHERE id = $1',
+      [botId]
+    );
+    let agent = agentRows[0];
     if (!agent) {
       console.warn('Agent not found for botId:', botId);
-      agent = { prompt_script: 'You are a helpful AI assistant. Respond concisely and naturally.' }; // Fallback prompt
+      agent = { prompt_script: 'You are a helpful AI assistant. Respond concisely and naturally.' };
     }
 
-    // Generate response with OpenAI (customize prompt/model if needed)
+    // 2) call OpenAI
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // Efficient and cheap; use 'gpt-4o' for better quality
+      model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: agent.prompt_script || 'You are a helpful AI assistant. Respond concisely and naturally.' },
-        { role: 'user', content: transcript }
+        { role: 'system',  content: agent.prompt_script },
+        { role: 'user',    content: transcript }
       ],
-      tools: [{ 
+      tools: [{
         type: 'function',
         function: {
           name: 'book_appointment',
@@ -466,7 +511,7 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
           parameters: {
             type: 'object',
             properties: {
-              time: { type: 'string' },
+              time:    { type: 'string' },
               details: { type: 'string' }
             }
           }
@@ -479,135 +524,130 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
 
     let responseText = completion.choices[0].message.content.trim();
 
+    // 3) handle tool_calls
     if (completion.choices[0].message.tool_calls) {
-      const toolCall = completion.choices[0].message.tool_calls[0];
-      if (toolCall.function.name === 'book_appointment') {
-        const args = JSON.parse(toolCall.function.arguments);
+      const call = completion.choices[0].message.tool_calls[0];
+      if (call.function.name === 'book_appointment') {
+        const args = JSON.parse(call.function.arguments);
         await bookAppointment(agent.integrationId, args.time, args.details);
-        responseText = 'Appointment booked successfully!'; // Or generate follow-up
+        responseText = 'Appointment booked successfully!';
       }
     }
 
     console.log('AI response text:', responseText);
-    
-    // Synthesize speech with ElevenLabs TTS (streaming for low latency)
-    const voiceId = agent.voice_id || process.env.ELEVENLABS_VOICE_ID || 'uYXf8XasLslADfZ2MB4u'; // Per-bot voice ID with fallback
-    const response = await axios({
-      method: 'post',
-      url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
-      headers: {
-        'xi-api-key': process.env.ELEVENLABS_API_KEY,
-        'Content-Type': 'application/json',
-        'Accept': 'audio/mpeg'
-      },
-      data: {
+
+    // 4) ElevenLabs TTS streaming
+    const voiceId = agent.voice_id || process.env.ELEVENLABS_VOICE_ID;
+    const ttsRes = await axios.post(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`,
+      {
         text: responseText,
         model_id: 'eleven_monolingual_v1',
-        voice_settings: {
-          stability: 0.4,
-          similarity_boost: 0.75
-        }
+        voice_settings: { stability: 0.4, similarity_boost: 0.75 }
       },
-      responseType: 'stream'
-    });
+      {
+        headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY },
+        responseType: 'stream'
+      }
+    );
 
-    // Convert stream to Buffer (MP3 from ElevenLabs)
-    const chunks = [];
-    for await (const chunk of response.data) {
-      chunks.push(chunk);
+    // 5) collect MP3 chunks
+    const mp3Chunks = [];
+    for await (const chunk of ttsRes.data) {
+      mp3Chunks.push(chunk);
     }
-    let audioBuffer = Buffer.concat(chunks);
-    console.log('ElevenLabs TTS audio generated (MP3), length:', audioBuffer.length);
+    let audioBuffer = Buffer.concat(mp3Chunks);
+    console.log('ElevenLabs TTS audio length:', audioBuffer.length);
 
-    // Resample MP3 to mu-law 8000Hz mono for Twilio (using ffmpeg)
+    // 6) resample to mu-law 8k mono
     audioBuffer = await new Promise((resolve, reject) => {
-      const inputStream = new stream.PassThrough();
-      inputStream.end(audioBuffer);
-      let buffers = [];
-      fluentFfmpeg(inputStream)
+      const inStream = new stream.PassThrough();
+      inStream.end(audioBuffer);
+      const outChunks = [];
+      fluentFfmpeg(inStream)
         .inputFormat('mp3')
         .audioCodec('pcm_mulaw')
         .audioChannels(1)
         .audioFrequency(8000)
         .format('mulaw')
         .on('error', reject)
-        .on('end', () => resolve(Buffer.concat(buffers)))
+        .on('end', () => resolve(Buffer.concat(outChunks)))
         .pipe(new stream.PassThrough({ highWaterMark: 1 << 25 }))
-        .on('data', chunk => buffers.push(chunk));
+        .on('data', c => outChunks.push(c));
     });
-    console.log('Audio resampled to mu-law, length:', audioBuffer.length);
+    console.log('Resampled to mu-law, length:', audioBuffer.length);
 
-    // Save TTS as WAV for manual debug (mu-law to PCM)
-    const ttsFilename = `tts_response_${Date.now()}.wav`;
-    saveChunkAsWav(audioBuffer, ttsFilename);
-    
-    // Optional: Append short silence to end for flush
-    const silence = generateSilenceBuffer(500); // 0.5s silence
-    audioBuffer = Buffer.concat([audioBuffer, silence]);
-    
-    // Send audio back to Twilio via WebSocket (split into 160-byte chunks, paced at 20ms)
+    // 7) save debug WAV
+    saveChunkAsWav(audioBuffer, `tts_response_${Date.now()}.wav`);
+
+    // 8) append 0.5s silence
+    audioBuffer = Buffer.concat([audioBuffer, generateSilenceBuffer(500)]);
+
+    // 9) send chunks back over WS to Twilio
     if (isTwilio && ws.readyState === WebSocket.OPEN) {
-      console.log('Starting audio send to Twilio');
       let offset = 0;
-      let chunkNumber = 1;
+      let chunkNum = 1;
       let timestamp = 0;
-      const chunkSize = 160; // ~20ms of mu-law audio
       let sentBytes = 0;
+      const chunkSize = 160; // ~20ms per chunk
       while (offset < audioBuffer.length) {
-        if (ws.readyState !== WebSocket.OPEN) {
-          console.warn('WebSocket closed mid-send; aborting remaining audio');
-          break;
-        }
         const end = Math.min(offset + chunkSize, audioBuffer.length);
         const chunk = audioBuffer.slice(offset, end);
         ws.send(JSON.stringify({
-          event: 'media',
-          streamSid: streamSid,
+          event:    'media',
+          streamSid,
           media: {
-            track: 'outbound',
-            chunk: chunkNumber.toString(),
+            track:     'outbound',
+            chunk:     chunkNum.toString(),
             timestamp: timestamp.toString(),
-            payload: chunk.toString('base64')
+            payload:   chunk.toString('base64')
           }
         }));
-        console.log(`Sent audio chunk ${chunkNumber}, length: ${chunk.length}`);
         sentBytes += chunk.length;
         offset = end;
-        chunkNumber++;
-        timestamp += 20; // Increment by ms per chunk
-        await new Promise(resolve => setTimeout(resolve, 20)); // Pace to match real-time playback
+        chunkNum++;
+        timestamp += 20;
+        await new Promise(r => setTimeout(r, 20));
       }
-      if (sentBytes === audioBuffer.length) {
-        console.log('Audio sent to Twilio successfully');
-      } else {
-        console.warn(`Audio send incomplete (sent ${sentBytes}/${audioBuffer.length} bytes)`);
-      }
+      console.log(`Sent ${sentBytes}/${audioBuffer.length} bytes`);
     } else {
-      console.warn('Not Twilio or WebSocket closed; skipping audio send');
+      console.warn('Skipping audio send (not Twilio/ws closed)');
     }
+
   } catch (error) {
-    console.error('Error in streamAiResponse:', error.message);
+    console.error('Error in streamAiResponse:', error);
   }
 }
 
+// —————————————
+// canDialContact using Postgres
+// —————————————
 async function canDialContact(agentId, phone) {
-  return new Promise((resolve, reject) => {
-    const today = new Date().toISOString().split('T')[0];
-    db.get(`SELECT * FROM Agents WHERE id = ?`, [agentId], (err, agent) => {
-      if (err) return reject(err);
-      if (!agent) return resolve(false);
+  const today = new Date().toISOString().split('T')[0];
 
-      db.get(`SELECT * FROM DashboardStats WHERE botId = ? AND date = ?`, [agentId, today], (err, stat) => {
-        if (err) return reject(err);
-        if ((stat ? stat.dials_count : 0) >= agent.dial_limit) return resolve(false);
+  const { rows: agentRows2 } = await db.query(
+    'SELECT * FROM Agents WHERE id = $1',
+    [agentId]
+  );
+  const agent2 = agentRows2[0];
+  if (!agent2 || !agent2.active) return false;
 
-        db.get(`SELECT COUNT(*) as count FROM CallLogs WHERE botId = ? AND contact_phone = ? AND DATE(call_date) = ?`, [agentId, phone, today], (err, row) => {
-          if (err) return reject(err);
-          resolve(row.count < agent.max_calls_per_contact);
-        });
-      });
-    });
-  });
+  const { rows: statRows2 } = await db.query(
+    'SELECT * FROM DashboardStats WHERE botId = $1 AND date = $2',
+    [agentId, today]
+  );
+  const stat2 = statRows2[0];
+  if ((stat2?.dials_count || 0) >= agent2.dial_limit) return false;
+
+  const { rows: countRows } = await db.query(
+    `SELECT COUNT(*)::int AS count
+       FROM CallLogs
+       WHERE botId = $1
+         AND contact_phone = $2
+         AND DATE(call_date) = $3`,
+    [agentId, phone, today]
+  );
+  return countRows[0].count < agent2.max_calls_per_contact;
 }
 
 // ✅ Server start
@@ -615,8 +655,6 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
-
-
 
 
 
