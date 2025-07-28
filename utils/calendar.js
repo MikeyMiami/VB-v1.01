@@ -1,6 +1,6 @@
 // utils/calendar.js
 const { google } = require('googleapis');
-const db = require('./db');
+const db = require('../db');
 
 async function createCalendarEvent({
   agentId,
