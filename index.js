@@ -18,7 +18,6 @@ const { Queue, Worker } = require('bullmq');
 const jwt = require('jsonwebtoken');
 const twilio = require('twilio');
 const db = require('./db'); // SQLite DB
-const { streamOpenAI } = require('./stream-gpt');
 const { fetchLeads, bookAppointment } = require('./utils/integrations');
 const sheetsRoutes = require('./routes/sheets');
 const debugRoutes = require('./routes/debug');
