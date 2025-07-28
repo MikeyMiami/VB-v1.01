@@ -17,7 +17,7 @@ const cron = require('node-cron');
 const { Queue, Worker } = require('bullmq');
 const jwt = require('jsonwebtoken');
 const twilio = require('twilio');
-const pool = require('./db'); // PostgreSQL pool
+const db = require('./db'); // SQLite DB
 const { fetchLeads, bookAppointment } = require('./utils/integrations');
 const sheetsRoutes = require('./routes/sheets');
 const debugRoutes = require('./routes/debug');
@@ -72,30 +72,17 @@ cron.schedule('*/10 * * * *', async () => {
 // Worker to process calls
 new Worker('calls', async job => {
   const { botId, phone, contactId } = job.data;
-  // Fetch agent
-  const agentRes = await pool.query('SELECT * FROM Agents WHERE id = $1', [botId]);
-  const agent = agentRes.rows[0];
-  if (!agent || !agent.active) return;
+  let agent;
+  db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, row) => {
+    if (err || !row || !row.active) return;
+    agent = row;
+  });
 
-  // Check dial limit
-  const today = new Date().toISOString().split('T')[0];
-  const statRes = await pool.query(
-    'SELECT * FROM DashboardStats WHERE botId = $1 AND date = $2',
-    [botId, today]
-  );
-  const stat = statRes.rows[0];
-  if (stat && stat.dials_count >= agent.dial_limit) return;
-
-  // Check max calls per contact
-  const logRes = await pool.query(
-    'SELECT COUNT(*) as count FROM CallLogs WHERE botId = $1 AND phone = $2 AND DATE(call_date) = $3',
-    [botId, phone, today]
-  );
-  const count = parseInt(logRes.rows[0].count, 10);
-  if (count >= agent.max_calls_per_contact) return;
+  const canDial = await canDialContact(botId, phone);
+  if (!canDial) return;
 
   try {
-    await client.calls.create({
+    const call = await client.calls.create({
       to: phone,
       from: process.env.TWILIO_NUMBER,
       url: `${process.env.PUBLIC_URL}/twilio-call/voice?botId=${botId}`,
@@ -103,50 +90,40 @@ new Worker('calls', async job => {
       statusCallbackMethod: 'POST'
     });
 
-    const todayStats = new Date().toISOString().split('T')[0];
-    const dashboardRes = await pool.query(
-      'SELECT * FROM DashboardStats WHERE botId = $1 AND date = $2',
-      [botId, todayStats]
-    );
-    const dashboardStat = dashboardRes.rows[0];
-    const dials = (dashboardStat ? dashboardStat.dials_count : 0) + 1;
-    if (dashboardStat) {
-      await pool.query(
-        'UPDATE DashboardStats SET dials_count = $1 WHERE id = $2',
-        [dials, dashboardStat.id]
-      );
-    } else {
-      await pool.query(
-        'INSERT INTO DashboardStats (botId, date, dials_count) VALUES ($1, $2, $3)',
-        [botId, todayStats, 1]
-      );
-    }
+    // Update stats
+    const today = new Date().toISOString().split('T')[0];
+    db.get(`SELECT * FROM DashboardStats WHERE botId = ? AND date = ?`, [botId, today], (err, stat) => {
+      if (err) return;
+      const dials = (stat ? stat.dials_count : 0) + 1;
+      if (stat) {
+        db.run(`UPDATE DashboardStats SET dials_count = ? WHERE id = ?`, [dials, stat.id]);
+      } else {
+        db.run(`INSERT INTO DashboardStats (botId, date, dials_count) VALUES (?, ?, 1)`, [botId, today]);
+      }
+    });
   } catch (err) {
     console.error('Call processing error:', err);
+    // Optional: job.failed(err.message);
   }
 }, { connection: redisConnection });
 
 // Cron for autopilot (every hour) - Adds to queue
-cron.schedule('0 * * * *', async () => {
-  try {
-    const now = new Date();
-    const day = now.toLocaleString('en-us', { weekday: 'long' }).toLowerCase();
-    const hour = now.getHours();
-    const agentsRes = await pool.query(
-      "SELECT * FROM Agents WHERE active = true AND call_days LIKE $1",
-      [`%${day}%`]
-    );
-    for (const agent of agentsRes.rows) {
+cron.schedule('0 * * * *', () => {
+  const now = new Date();
+  const day = now.toLocaleString('en-us', { weekday: 'long' }).toLowerCase();
+  const hour = now.getHours();
+
+  db.all(`SELECT * FROM Agents WHERE active = 1 AND call_days LIKE '%${day}%'`, [], async (err, activeAgents) => {
+    if (err) return console.error('Cron error:', err);
+    for (const agent of activeAgents) {
       if (hour < agent.call_time_start || hour >= agent.call_time_end) continue;
+
       const leads = await fetchLeads(agent.integrationId);
       for (const lead of leads) {
         await callQueue.add('dial', { botId: agent.id, phone: lead.phone, contactId: lead.id });
       }
     }
-  } catch (err) {
-    console.error('Cron error:', err);
-  }
-});
+  });
 });
 
 // Auth Middleware
@@ -615,29 +592,23 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
 }
 
 async function canDialContact(agentId, phone) {
-  const today = new Date().toISOString().split('T')[0];
-  try {
-    const agentRes = await pool.query('SELECT * FROM Agents WHERE id = $1', [agentId]);
-    const agent = agentRes.rows[0];
-    if (!agent) return false;
+  return new Promise((resolve, reject) => {
+    const today = new Date().toISOString().split('T')[0];
+    db.get(`SELECT * FROM Agents WHERE id = ?`, [agentId], (err, agent) => {
+      if (err) return reject(err);
+      if (!agent) return resolve(false);
 
-    const statRes = await pool.query(
-      'SELECT * FROM DashboardStats WHERE botId = $1 AND date = $2',
-      [agentId, today]
-    );
-    const stat = statRes.rows[0];
-    if ((stat ? stat.dials_count : 0) >= agent.dial_limit) return false;
+      db.get(`SELECT * FROM DashboardStats WHERE botId = ? AND date = ?`, [agentId, today], (err, stat) => {
+        if (err) return reject(err);
+        if ((stat ? stat.dials_count : 0) >= agent.dial_limit) return resolve(false);
 
-    const logRes = await pool.query(
-      'SELECT COUNT(*) as count FROM CallLogs WHERE botId = $1 AND phone = $2 AND DATE(call_date) = $3',
-      [agentId, phone, today]
-    );
-    const count = parseInt(logRes.rows[0].count, 10);
-    return count < agent.max_calls_per_contact;
-  } catch (err) {
-    console.error('Error in canDialContact:', err);
-    return false;
-  }
+        db.get(`SELECT COUNT(*) as count FROM CallLogs WHERE botId = ? AND contact_phone = ? AND DATE(call_date) = ?`, [agentId, phone, today], (err, row) => {
+          if (err) return reject(err);
+          resolve(row.count < agent.max_calls_per_contact);
+        });
+      });
+    });
+  });
 }
 
 // ✅ Server start
