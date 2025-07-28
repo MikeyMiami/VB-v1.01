@@ -103,7 +103,7 @@
         } else {
           await pool.query(/* SQL QUERY */);
         }
-      });
+      }
     } catch (err) {
       console.error('Call processing error:', err);
       // Optional: job.failed(err.message);
