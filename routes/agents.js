@@ -52,12 +52,12 @@ router.post('/leads/:botId', async (req, res) => {
     );
     const agent = rows[0];
     if (!agent) return res.status(404).json({ error: 'Bot not found' });
-    if (!agent.integrationid) {
+    if (!agent.integrationId) {
       return res.status(400).json({ error: 'No integration configured' });
     }
 
     // Delegate to your existing integration logic
-    const leads = await fetchLeads(agent.integrationid, listId);
+    const leads = await fetchLeads(agent.integrationId, listId);
     res.json({ leads });
   } catch (err) {
     console.error('❌ Error in /agents/leads:', err.message);
