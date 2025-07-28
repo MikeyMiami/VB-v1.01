@@ -1,4 +1,4 @@
-// index.js (Updated: Fixed invalid Queue instantiation) //updated for PostgreSQL
+// index.js (Updated: Fixed invalid Queue instantiation)
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -623,6 +623,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () async => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+
 
 
 
