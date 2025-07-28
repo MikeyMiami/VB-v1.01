@@ -1,4 +1,3 @@
---- FILE: index.js ---
 // index.js (Updated: Fixed invalid Queue instantiation) //updated for PostgreSQL
 const express = require('express');
 const app = express();
