@@ -1,103 +1,83 @@
 const express = require('express');
-const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const { v4: uuidv4 } = require('uuid');
-const { OpenAI } = require('openai');
-
 const router = express.Router();
+const db = require('../db');
+const { OpenAIStream } = require('../utils/openai-stream');
+const { ElevenLabsStream } = require('../utils/tts');
+const { DeepgramTranscriber } = require('../utils/stt');
+const { createWriteStream } = require('fs');
+const axios = require('axios');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
-const AUDIO_FOLDER = path.join(__dirname, '..', 'public', 'audio');
+router.ws('/voice-agent/:agentId', async (ws, req) => {
+  const agentId = parseInt(req.params.agentId);
+  const agent = await db.getAgentById(agentId);
+  if (!agent) return ws.close();
 
-// Ensure audio folder exists
-if (!fs.existsSync(AUDIO_FOLDER)) {
-  fs.mkdirSync(AUDIO_FOLDER, { recursive: true });
-}
+  const transcriber = new DeepgramTranscriber();
+  const audioStream = new ElevenLabsStream(agent.voice_id || process.env.ELEVENLABS_VOICE_ID);
+  const gptStream = new OpenAIStream(agent.prompt);
 
-router.post('/stream', async (req, res) => {
-  const { message } = req.body;
+  const transcriptFile = `./transcripts/session-${Date.now()}.txt`;
+  const fileWriter = createWriteStream(transcriptFile);
 
-  if (!message) {
-    return res.status(400).json({ error: 'Message is required' });
-  }
+  let currentTranscript = '';
+  let aiResponseBuffer = '';
+  let isBookingTriggered = false;
 
-  try {
-    const gptStream = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: 'You are a helpful and concise voice agent.' },
-        { role: 'user', content: message }
-      ],
-      stream: true
-    });
+  ws.on('message', async (msg) => {
+    const audioChunk = Buffer.from(msg);
+    transcriber.write(audioChunk);
 
-    let buffer = '';
-    const audioUrls = [];
+    if (!audioStream.isStreaming()) {
+      const transcriptData = await transcriber.flush();
+      const userText = transcriptData.text || '';
 
-    for await (const chunk of gptStream) {
-      const delta = chunk.choices?.[0]?.delta?.content;
-      if (!delta) continue;
+      currentTranscript += `User: ${userText}\n`;
+      fileWriter.write(`User: ${userText}\n`);
 
-      buffer += delta;
+      const gptReplyStream = await gptStream.sendPromptStream(userText, async (word) => {
+        ws.send(word);
+        aiResponseBuffer += word;
 
-      const shouldSend = buffer.split(' ').length >= 4 || delta.includes('.') || delta.includes('!');
+        // Detect inline booking trigger
+        if (!isBookingTriggered && aiResponseBuffer.includes('"action":"book_calendar"')) {
+          try {
+            const match = aiResponseBuffer.match(/{[^}]*"action"\s*:\s*"book_calendar"[^}]*}/);
+            if (match) {
+              const payload = JSON.parse(match[0]);
 
-      if (shouldSend) {
-        const audioBuffer = await synthesizeSpeech(buffer);
-        const filename = `${uuidv4()}.mp3`;
-        const filepath = path.join(AUDIO_FOLDER, filename);
-        fs.writeFileSync(filepath, audioBuffer);
+              const { email, time } = payload;
+              const response = await axios.post(`${process.env.API_BASE_URL || 'https://vb-v1-01-web-8zvw.onrender.com'}/calendar/create`, {
+                agentId: agentId,
+                recipientEmail: email,
+                startTime: time,
+                durationMinutes: agent.meeting_duration_minutes || 15,
+                location: agent.calendar_type === 'zoom' ? 'Zoom' : 'Phone Call',
+                title: agent.meeting_title_template || 'Appointment',
+                description: `Call with ${agent.name || 'AI Assistant'}`
+              });
 
-        const fileUrl = `${process.env.PUBLIC_URL}/audio/${filename}`;
-        audioUrls.push(fileUrl);
-        buffer = '';
-      }
+              console.log('📅 Calendar booked:', response.data);
+              isBookingTriggered = true;
+            }
+          } catch (err) {
+            console.error('❌ Error processing booking trigger:', err.message);
+          }
+        }
+      });
+
+      currentTranscript += `Bot: ${gptReplyStream.fullResponse}\n`;
+      fileWriter.write(`Bot: ${gptReplyStream.fullResponse}\n`);
     }
-
-    // Catch any remaining buffer
-    if (buffer.trim()) {
-      const audioBuffer = await synthesizeSpeech(buffer);
-      const filename = `${uuidv4()}.mp3`;
-      const filepath = path.join(AUDIO_FOLDER, filename);
-      fs.writeFileSync(filepath, audioBuffer);
-
-      const fileUrl = `${process.env.PUBLIC_URL}/audio/${filename}`;
-      audioUrls.push(fileUrl);
-    }
-
-    res.status(200).json({ audioChunks: audioUrls });
-  } catch (err) {
-    console.error('❌ Error:', err.message);
-    res.status(500).json({ error: 'Failed to stream response' });
-  }
-});
-
-// Helper to call ElevenLabs
-async function synthesizeSpeech(text) {
-  const response = await axios({
-    method: 'post',
-    url: `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
-    headers: {
-      'xi-api-key': ELEVENLABS_API_KEY,
-      'Content-Type': 'application/json',
-      'Accept': 'audio/mpeg'
-    },
-    data: {
-      text: text,
-      model_id: 'eleven_monolingual_v1',
-      voice_settings: {
-        stability: 0.4,
-        similarity_boost: 0.75
-      }
-    },
-    responseType: 'arraybuffer'
   });
 
-  return response.data;
-}
+  ws.on('close', () => {
+    transcriber.end();
+    fileWriter.end();
+  });
+
+  audioStream.pipe(ws);
+});
 
 module.exports = router;
+
 
