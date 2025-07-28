@@ -4,8 +4,34 @@ const { OpenAI } = require('openai');
 const router = express.Router();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Used by other routes like voice-agent.js
+async function streamOpenAI({ prompt, onDelta, onComplete }) {
+  try {
+    const stream = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: 'Continue this conversation based on prior transcript.' }
+      ],
+      stream: true,
+    });
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (!delta) continue;
+
+      await onDelta(delta);
+    }
+
+    if (onComplete) await onComplete();
+  } catch (err) {
+    console.error('❌ GPT Stream Error:', err.message);
+  }
+}
+
+// Optional: Web browser test endpoint
 router.get('/', async (req, res) => {
-  const userPrompt = req.query.message || "Hello, how can I help you?";
+  const prompt = req.query.prompt || 'You are a helpful assistant.';
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -16,8 +42,8 @@ router.get('/', async (req, res) => {
     const stream = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [
-        { role: 'system', content: 'You are a helpful assistant.' },
-        { role: 'user', content: userPrompt }
+        { role: 'system', content: prompt },
+        { role: 'user', content: 'Say hello and introduce yourself.' }
       ],
       stream: true,
     });
@@ -50,6 +76,9 @@ router.get('/', async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = {
+  streamOpenAI,
+  router
+};
 
 
