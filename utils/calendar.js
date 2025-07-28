@@ -2,14 +2,24 @@
 const { google } = require('googleapis');
 const db = require('../db');
 
-const createCalendarEvent = async (agentId, recipientEmail, startTime, options = {}) => {
+const createCalendarEvent = async (
+  agentId,
+  recipientEmail,
+  startTime,
+  durationMinutes = 15,
+  location = 'Phone Call',
+  title,
+  description
+) => {
   if (!agentId) throw new Error('Missing agentId');
 
   // Step 1: Fetch agent + tokens from DB
   const result = await db.query(`SELECT * FROM Agents WHERE id = $1`, [agentId]);
   const agent = result.rows[0];
 
-  if (!agent || !agent.calendar_token) throw new Error(`No calendar tokens found for agent ${agentId}`);
+  if (!agent || !agent.calendar_token) {
+    throw new Error(`No calendar tokens found for agent ${agentId}`);
+  }
 
   let tokens;
   try {
@@ -35,8 +45,8 @@ const createCalendarEvent = async (agentId, recipientEmail, startTime, options =
     const newTokens = await oAuth2Client.getAccessToken();
     if (newTokens?.token && newTokens.token !== tokens.access_token) {
       console.log('🔁 Refreshed access token for agent:', agentId);
-
       tokens.access_token = newTokens.token;
+
       await db.query(`UPDATE Agents SET calendar_token = $1 WHERE id = $2`, [
         JSON.stringify(tokens),
         agentId
@@ -50,33 +60,30 @@ const createCalendarEvent = async (agentId, recipientEmail, startTime, options =
   const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
 
   const start = new Date(startTime);
-  const duration = options.durationMinutes || agent.meeting_duration_minutes || 15;
-  const end = new Date(start.getTime() + duration * 60000);
+  const end = new Date(start.getTime() + (durationMinutes || 15) * 60000);
 
   const event = {
-    summary: options.title || agent.meeting_title_template || 'Appointment',
-    description: options.description || '',
-    location: options.location || '',
+    summary: title || agent.meeting_title_template || 'Appointment',
+    description: description || '',
+    location: location,
     start: {
       dateTime: start.toISOString(),
-      timeZone: agent.timezone || 'America/New_York'
+      timeZone: agent.timezone || 'America/New_York',
     },
     end: {
       dateTime: end.toISOString(),
-      timeZone: agent.timezone || 'America/New_York'
+      timeZone: agent.timezone || 'America/New_York',
     },
-    attendees: recipientEmail ? [{ email: recipientEmail }] : []
+    attendees: [{ email: recipientEmail }],
   };
 
   // Step 5: Insert into calendar
   const resultInsert = await calendar.events.insert({
     calendarId: 'primary',
-    resource: event
+    resource: event,
   });
 
   return resultInsert.data;
 };
 
 module.exports = { createCalendarEvent };
-
-
