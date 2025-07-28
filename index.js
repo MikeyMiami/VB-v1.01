@@ -102,7 +102,12 @@
           await pool.query(/* SQL QUERY */);
         } else {
           await pool.query(/* SQL QUERY */);
-        }
+} catch (error) {
+  console.error('Caught error:', error);
+}
+    catch (error) {
+      console.error('Unhandled error:', error);
+    }
       }
     } catch (err) {
       console.error('Call processing error:', err);
@@ -140,6 +145,11 @@
       next();
     } catch (err) {
       res.status(401).json({ error: 'Invalid key' });
+} catch (error) {
+  console.error('Caught error:', error);
+}
+    catch (error) {
+      console.error('Unhandled error:', error);
     }
   };
   
@@ -353,7 +363,12 @@
               responding = true; // Lock to prevent overlaps
               if (!isTwilio) {
                 ws.send(JSON.stringify({ transcript }));
-              }
+} catch (error) {
+  console.error('Caught error:', error);
+}
+      catch (error) {
+        console.error('Unhandled error:', error);
+      }
               await streamAiResponse(transcript, ws, isTwilio, streamSid, botId); // Use botId from connection
               responding = false; // Unlock after done
             } else {
@@ -445,7 +460,7 @@
     try {
       console.log('Generating AI response for transcript:', transcript);
       
-      let agent = await new Promise((resolve, reject) async => {
+      let agent = await new Promise(async (resolve, reject) => {
           const result = await pool.query(/* SQL QUERY */);
           const row = result.rows[0];
           if (err) reject(err);
@@ -455,7 +470,12 @@
       if (!agent) {
         console.warn('Agent not found for botId:', botId);
         agent = { prompt_script: 'You are a helpful AI assistant. Respond concisely and naturally.' }; // Fallback prompt
-      }
+} catch (error) {
+  console.error('Caught error:', error);
+}
+    catch (error) {
+      console.error('Unhandled error:', error);
+    }
   
       // Generate response with OpenAI (customize prompt/model if needed)
       const completion = await openai.chat.completions.create({
@@ -526,7 +546,7 @@
       console.log('ElevenLabs TTS audio generated (MP3), length:', audioBuffer.length);
   
       // Resample MP3 to mu-law 8000Hz mono for Twilio (using ffmpeg)
-      audioBuffer = await new Promise((resolve, reject) async => {
+      audioBuffer = await new Promise(async (resolve, reject) => {
         const inputStream = new stream.PassThrough();
         inputStream.end(audioBuffer);
         let buffers = [];
@@ -594,10 +614,9 @@
     } catch (error) {
       console.error('Error in streamAiResponse:', error.message);
     }
-  }
   
   async function canDialContact(agentId, phone) {
-    return new Promise((resolve, reject) async => {
+    return new Promise(async (resolve, reject) => {
       const today = new Date().toISOString().split('T')[0];
           const result = await pool.query(/* SQL QUERY */);
           const row = result.rows[0];
@@ -613,17 +632,11 @@
           const row = result.rows[0];
             if (err) return reject(err);
             resolve(row.count < agent.max_calls_per_contact);
-          });
-        });
-      });
-    });
-  }
   
   // ✅ Server start
   const PORT = process.env.PORT || 3000;
   server.listen(PORT, () async => {
     console.log(`🚀 Server listening on port ${PORT}`);
-  });
   
   
   
@@ -633,7 +646,6 @@
   
 
 })().catch(err => console.error('Unhandled error in main async wrapper:', err));
-
 
 
 
