@@ -1,4 +1,5 @@
-// index.js (Updated: Fixed invalid Queue instantiation)
+--- FILE: index.js ---
+// index.js (Updated: Fixed invalid Queue instantiation) //updated for PostgreSQL
 const express = require('express');
 const app = express();
 const dotenv = require('dotenv');
@@ -17,7 +18,7 @@ const cron = require('node-cron');
 const { Queue, Worker } = require('bullmq');
 const jwt = require('jsonwebtoken');
 const twilio = require('twilio');
-const db = require('./db'); // SQLite DB
+const { pool } = require('./db');
 const { fetchLeads, bookAppointment } = require('./utils/integrations');
 const sheetsRoutes = require('./routes/sheets');
 const debugRoutes = require('./routes/debug');
@@ -73,7 +74,8 @@ cron.schedule('*/10 * * * *', async () => {
 new Worker('calls', async job => {
   const { botId, phone, contactId } = job.data;
   let agent;
-  db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, row) => {
+        const result = await pool.query(/* SQL QUERY */);
+        const row = result.rows[0];
     if (err || !row || !row.active) return;
     agent = row;
   });
@@ -92,13 +94,14 @@ new Worker('calls', async job => {
 
     // Update stats
     const today = new Date().toISOString().split('T')[0];
-    db.get(`SELECT * FROM DashboardStats WHERE botId = ? AND date = ?`, [botId, today], (err, stat) => {
+        const result = await pool.query(/* SQL QUERY */);
+        const row = result.rows[0];
       if (err) return;
       const dials = (stat ? stat.dials_count : 0) + 1;
       if (stat) {
-        db.run(`UPDATE DashboardStats SET dials_count = ? WHERE id = ?`, [dials, stat.id]);
+        await pool.query(/* SQL QUERY */);
       } else {
-        db.run(`INSERT INTO DashboardStats (botId, date, dials_count) VALUES (?, ?, 1)`, [botId, today]);
+        await pool.query(/* SQL QUERY */);
       }
     });
   } catch (err) {
@@ -108,12 +111,13 @@ new Worker('calls', async job => {
 }, { connection: redisConnection });
 
 // Cron for autopilot (every hour) - Adds to queue
-cron.schedule('0 * * * *', () => {
+cron.schedule('0 * * * *', () async => {
   const now = new Date();
   const day = now.toLocaleString('en-us', { weekday: 'long' }).toLowerCase();
   const hour = now.getHours();
 
-  db.all(`SELECT * FROM Agents WHERE active = 1 AND call_days LIKE '%${day}%'`, [], async (err, activeAgents) => {
+        const result = await pool.query(/* SQL QUERY */);
+        const rows = result.rows;
     if (err) return console.error('Cron error:', err);
     for (const agent of activeAgents) {
       if (hour < agent.call_time_start || hour >= agent.call_time_end) continue;
@@ -152,7 +156,7 @@ app.use('/audio', express.static(path.join(__dirname, 'public/audio')));
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 // ✅ Health check
-app.get('/', (req, res) => {
+app.get('/', (req, res) async => {
   res.send('✅ Voicebot backend is live and running.');
 });
 
@@ -185,18 +189,18 @@ app.use('/queue/log-stream', logStreamRouter);
 // ⏰ Every 60 seconds (once a minute)
 const runAgentUsageReset = require('./jobs/resetAgentUsage');
 
-setInterval(() => {
+setInterval(() async => {
   runAgentUsageReset();
 }, 60 * 1000);
 
 // ✅ Debug route
-app.get('/debug-route', (req, res) => {
+app.get('/debug-route', (req, res) async => {
   console.log('✅ Debug route was hit');
   res.status(200).send('OK - Debug route is alive');
 });
 
 // ✅ Unknown POST catcher
-app.post('*', (req, res) => {
+app.post('*', (req, res) async => {
   console.warn('⚠️ Unknown POST path hit:', req.path);
   res.status(404).send('Not found');
 });
@@ -306,7 +310,7 @@ wss.on('connection', async (ws, request) => { // Add request param for query
 
   let lastChunkTime = Date.now();
 
-  const bufferInterval = setInterval(() => {
+  const bufferInterval = setInterval(() async => {
     const now = Date.now();
     if (now - lastChunkTime > 1000 && dgConnection && dgConnection.getReadyState() === 1) {
       const silenceBuffer = generateSilenceBuffer();
@@ -315,14 +319,14 @@ wss.on('connection', async (ws, request) => { // Add request param for query
     }
   }, 250);
 
-  const keepAliveInterval = setInterval(() => {
+  const keepAliveInterval = setInterval(() async => {
     if (dgConnection && dgConnection.getReadyState() === 1) {
       dgConnection.keepAlive();
       console.log('Sent KeepAlive');
     }
   }, 5000);
 
-  ws.on('message', (msg) => {
+  ws.on('message', (msg) async => {
     try {
       const data = JSON.parse(msg.toString());
       if (data.event === 'connected') {
@@ -424,7 +428,7 @@ wss.on('connection', async (ws, request) => { // Add request param for query
     }
   });
 
-  ws.on('close', () => {
+  ws.on('close', () async => {
     console.log('🔴 WebSocket closed');
     clearInterval(keepAliveInterval);
     clearInterval(bufferInterval);
@@ -441,8 +445,9 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
   try {
     console.log('Generating AI response for transcript:', transcript);
     
-    let agent = await new Promise((resolve, reject) => {
-      db.get(`SELECT * FROM Agents WHERE id = ?`, [botId], (err, row) => {
+    let agent = await new Promise((resolve, reject) async => {
+        const result = await pool.query(/* SQL QUERY */);
+        const row = result.rows[0];
         if (err) reject(err);
         resolve(row);
       });
@@ -521,7 +526,7 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
     console.log('ElevenLabs TTS audio generated (MP3), length:', audioBuffer.length);
 
     // Resample MP3 to mu-law 8000Hz mono for Twilio (using ffmpeg)
-    audioBuffer = await new Promise((resolve, reject) => {
+    audioBuffer = await new Promise((resolve, reject) async => {
       const inputStream = new stream.PassThrough();
       inputStream.end(audioBuffer);
       let buffers = [];
@@ -592,17 +597,20 @@ async function streamAiResponse(transcript, ws, isTwilio, streamSid, botId) {
 }
 
 async function canDialContact(agentId, phone) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) async => {
     const today = new Date().toISOString().split('T')[0];
-    db.get(`SELECT * FROM Agents WHERE id = ?`, [agentId], (err, agent) => {
+        const result = await pool.query(/* SQL QUERY */);
+        const row = result.rows[0];
       if (err) return reject(err);
       if (!agent) return resolve(false);
 
-      db.get(`SELECT * FROM DashboardStats WHERE botId = ? AND date = ?`, [agentId, today], (err, stat) => {
+        const result = await pool.query(/* SQL QUERY */);
+        const row = result.rows[0];
         if (err) return reject(err);
         if ((stat ? stat.dials_count : 0) >= agent.dial_limit) return resolve(false);
 
-        db.get(`SELECT COUNT(*) as count FROM CallLogs WHERE botId = ? AND contact_phone = ? AND DATE(call_date) = ?`, [agentId, phone, today], (err, row) => {
+        const result = await pool.query(/* SQL QUERY */);
+        const row = result.rows[0];
           if (err) return reject(err);
           resolve(row.count < agent.max_calls_per_contact);
         });
@@ -613,7 +621,7 @@ async function canDialContact(agentId, phone) {
 
 // ✅ Server start
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, () async => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
 
