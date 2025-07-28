@@ -7,15 +7,7 @@ const { createCalendarEvent } = require('../utils/calendar');
 // POST /calendar/create (Production Logic)
 router.post('/create', async (req, res) => {
   const body = req.body || {};
-  const {
-    agentId,
-    recipientEmail,
-    startTime,
-    durationMinutes,
-    location,
-    title,
-    description
-  } = body;
+  const { agentId, recipientEmail, startTime, durationMinutes, location, title, description } = body;
 
   console.log('💡 Incoming request to /calendar/create');
   console.log('📦 Headers:', req.headers);
@@ -36,7 +28,6 @@ router.post('/create', async (req, res) => {
       title,
       description
     });
-
     res.status(200).json({ message: 'Event created', event });
   } catch (err) {
     console.error('❌ Error creating calendar event:', err.message);
@@ -47,14 +38,7 @@ router.post('/create', async (req, res) => {
 // 🔧 TEMP: Manual Test Without Database or Agent Lookup
 router.post('/test-create', async (req, res) => {
   const body = req.body || {};
-  const {
-    recipientEmail,
-    startTime,
-    durationMinutes = 15,
-    location = 'Phone Call',
-    title = 'Test Appointment with Mikey',
-    description = 'Test event'
-  } = body;
+  const { recipientEmail, startTime, title, durationMinutes, location, description } = body;
 
   if (!recipientEmail || !startTime) {
     return res.status(400).json({ error: 'Missing recipientEmail or startTime' });
@@ -74,15 +58,15 @@ router.post('/test-create', async (req, res) => {
   const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
 
   const start = new Date(startTime);
-  const end = new Date(start.getTime() + durationMinutes * 60000);
+  const end = new Date(start.getTime() + (durationMinutes || 15) * 60000);
 
   const event = {
-    summary: title,
-    description,
-    location,
+    summary: title || 'Test Appointment with Mikey',
+    description: description || 'Test booking',
+    location: location || 'Phone Call',
     start: { dateTime: start.toISOString() },
     end: { dateTime: end.toISOString() },
-    attendees: [{ email: recipientEmail }]
+    attendees: [{ email: recipientEmail }],
   };
 
   try {
