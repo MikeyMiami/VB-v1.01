@@ -2,7 +2,7 @@
 const { google } = require('googleapis');
 const db = require('../db');
 
-const createCalendarEvent = async (agentId, recipientEmail, startTime) => {
+const createCalendarEvent = async (agentId, recipientEmail, startTime, options = {}) => {
   if (!agentId) throw new Error('Missing agentId');
 
   // Step 1: Fetch agent + tokens from DB
@@ -50,13 +50,22 @@ const createCalendarEvent = async (agentId, recipientEmail, startTime) => {
   const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
 
   const start = new Date(startTime);
-  const end = new Date(start.getTime() + (agent.meeting_duration_minutes || 30) * 60000);
+  const duration = options.durationMinutes || agent.meeting_duration_minutes || 15;
+  const end = new Date(start.getTime() + duration * 60000);
 
   const event = {
-    summary: agent.meeting_title_template || 'Appointment',
-    start: { dateTime: start.toISOString(), timeZone: agent.timezone || 'America/New_York' },
-    end: { dateTime: end.toISOString(), timeZone: agent.timezone || 'America/New_York' },
-    attendees: [{ email: recipientEmail }],
+    summary: options.title || agent.meeting_title_template || 'Appointment',
+    description: options.description || '',
+    location: options.location || '',
+    start: {
+      dateTime: start.toISOString(),
+      timeZone: agent.timezone || 'America/New_York'
+    },
+    end: {
+      dateTime: end.toISOString(),
+      timeZone: agent.timezone || 'America/New_York'
+    },
+    attendees: recipientEmail ? [{ email: recipientEmail }] : []
   };
 
   // Step 5: Insert into calendar
@@ -69,4 +78,5 @@ const createCalendarEvent = async (agentId, recipientEmail, startTime) => {
 };
 
 module.exports = { createCalendarEvent };
+
 
