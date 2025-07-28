@@ -1,73 +1,75 @@
+// utils/calendar.js
 const { google } = require('googleapis');
 const db = require('../db');
 
-async function createCalendarEvent({
-  agentId,
-  recipientEmail,
-  startTime,
-  durationMinutes = 15,
-  location = 'Phone Call',
-  title = 'Meeting',
-  description = '',
-}) {
-  const client = await db.connect();
+const createCalendarEvent = async ({ agentId, recipientEmail, startTime, durationMinutes, location, title, description }) => {
+  if (!agentId) throw new Error('Missing agentId');
 
+  // Step 1: Fetch agent + tokens from DB
+  const result = await db.query(`SELECT * FROM Agents WHERE id = $1`, [agentId]);
+  const agent = result.rows[0];
+
+  if (!agent || !agent.calendar_token) throw new Error(`No calendar tokens found for agent ${agentId}`);
+
+  let tokens;
   try {
-    // ✅ Fixed: Pass agentId directly, not full body
-    const integrationQuery = await client.query(
-      'SELECT * FROM Integrations WHERE agent_id = $1 AND integration_type = $2',
-      [agentId, 'google_calendar']
-    );
-
-    const integration = integrationQuery.rows[0];
-
-    if (!integration) {
-      throw new Error('No Google Calendar integration found for this agent.');
-    }
-
-    const creds = JSON.parse(integration.calendar_token || '{}');
-
-    const oauth2Client = new google.auth.OAuth2();
-    oauth2Client.setCredentials({
-      access_token: creds.access_token,
-      refresh_token: creds.refresh_token,
-      scope: creds.scope,
-      token_type: creds.token_type,
-      expiry_date: creds.expiry_date,
-    });
-
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-
-    const endTime = new Date(new Date(startTime).getTime() + durationMinutes * 60000).toISOString();
-
-    const event = {
-      summary: title,
-      description,
-      start: {
-        dateTime: startTime,
-        timeZone: 'America/New_York',
-      },
-      end: {
-        dateTime: endTime,
-        timeZone: 'America/New_York',
-      },
-      location,
-      attendees: recipientEmail ? [{ email: recipientEmail }] : [],
-    };
-
-    const response = await calendar.events.insert({
-      calendarId: 'primary',
-      resource: event,
-    });
-
-    return response.data;
-  } catch (err) {
-    console.error('❌ Error creating calendar event:', err.message);
-    throw err;
-  } finally {
-    client.release();
+    tokens = JSON.parse(agent.calendar_token);
+  } catch (e) {
+    throw new Error(`calendar_token is not valid JSON for agent ${agentId}`);
   }
-}
+
+  // Step 2: Set up OAuth2 client
+  const oAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+
+  oAuth2Client.setCredentials({
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token
+  });
+
+  // Step 3: Attempt to refresh token if needed
+  try {
+    const newTokens = await oAuth2Client.getAccessToken();
+    if (newTokens?.token && newTokens.token !== tokens.access_token) {
+      console.log('🔁 Refreshed access token for agent:', agentId);
+
+      tokens.access_token = newTokens.token;
+      await db.query(`UPDATE Agents SET calendar_token = $1 WHERE id = $2`, [
+        JSON.stringify(tokens),
+        agentId
+      ]);
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not refresh token:', err.message);
+  }
+
+  // Step 4: Build calendar event
+  const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+
+  const start = new Date(startTime);
+  const end = new Date(start.getTime() + (durationMinutes || 15) * 60000);
+
+  const event = {
+    summary: title || agent.meeting_title_template || 'Appointment',
+    description: description || '',
+    location: location || 'Phone Call',
+    start: { dateTime: start.toISOString(), timeZone: agent.timezone || 'America/New_York' },
+    end: { dateTime: end.toISOString(), timeZone: agent.timezone || 'America/New_York' },
+    attendees: recipientEmail ? [{ email: recipientEmail }] : [],
+  };
+
+  // Step 5: Insert into calendar
+  const resultInsert = await calendar.events.insert({
+    calendarId: 'primary',
+    resource: event
+  });
+
+  return resultInsert.data;
+};
 
 module.exports = { createCalendarEvent };
+
 
