@@ -1,4 +1,4 @@
-// VB-v1.01-main/routes/integrations.js
+// routes/integrations.js
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
@@ -7,41 +7,45 @@ const db = require('../db');
 router.post('/create', async (req, res) => {
   const { userId, integration_type, api_key, creds } = req.body;
   const credsJson = JSON.stringify(creds || {});
-  db.run(
-    `INSERT INTO Integrations (userId, integration_type, api_key, creds)
-     VALUES (?, ?, ?, ?)`,
-    [userId, integration_type, api_key, credsJson],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ integrationId: this.lastID });
-    }
-  );
+
+  try {
+    const result = await db.query(
+      `INSERT INTO Integrations (userId, integration_type, api_key, creds)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [userId, integration_type, api_key, credsJson]
+    );
+    res.json({ integrationId: result.rows[0].id });
+  } catch (err) {
+    console.error('Error creating integration:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Update integration (protected, user updates creds or key)
 router.patch('/update/:integrationId', async (req, res) => {
   const { api_key, creds } = req.body;
+  const integrationId = req.params.integrationId;
 
   // Only serialize creds if provided
   const credsJson = creds !== undefined ? JSON.stringify(creds) : null;
 
-  db.run(
-    `UPDATE Integrations
-     SET
-       api_key = CASE WHEN ? IS NOT NULL AND ? != '' THEN ? ELSE api_key END,
-       creds = CASE WHEN ? IS NOT NULL THEN ? ELSE creds END,
-       modifiedDate = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [
-      api_key, api_key, api_key,
-      credsJson, credsJson,
-      req.params.integrationId
-    ],
-    (err) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true });
-    }
-  );
+  try {
+    await db.query(
+      `UPDATE Integrations
+       SET
+         api_key      = CASE WHEN $1 IS NOT NULL AND $1 <> '' THEN $1 ELSE api_key END,
+         creds        = CASE WHEN $2 IS NOT NULL         THEN $2 ELSE creds    END,
+         modifiedDate = CURRENT_TIMESTAMP
+       WHERE id = $3`,
+      [api_key, credsJson, integrationId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating integration:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
+
