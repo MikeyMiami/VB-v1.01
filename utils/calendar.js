@@ -2,43 +2,23 @@
 const { google } = require('googleapis');
 const db = require('../db');
 
-async function createCalendarEvent({
-  agentId,
-  recipientEmail,
-  startTime,
-  durationMinutes = 15,
-  location = 'Phone Call',
-  title = 'Appointment with Mikey',
-  description = ''
-}) {
-  if (!agentId || !startTime) {
-    throw new Error('Missing required parameters: agentId or startTime');
-  }
+const createCalendarEvent = async (agentId, recipientEmail, startTime) => {
+  if (!agentId) throw new Error('Missing agentId');
 
-  // 🔐 Get OAuth credentials from DB (PostgreSQL version)
-const result = await db.query(
-  `SELECT * FROM Integrations WHERE agent_id = $1 AND integration_type = 'google_calendar'`,
-  [agentId]
-);
+  // Step 1: Fetch agent + tokens from DB
+  const result = await db.query(`SELECT * FROM Agents WHERE id = $1`, [agentId]);
+  const agent = result.rows[0];
 
-if (result.rows.length === 0) {
-  throw new Error('No integration found for agent');
-}
+  if (!agent || !agent.calendar_token) throw new Error(`No calendar tokens found for agent ${agentId}`);
 
-const integration = result.rows[0];
-
-
-  if (!integration || !integration.creds) {
-    throw new Error('Missing or invalid integration credentials for this agent.');
-  }
-
-  let creds;
+  let tokens;
   try {
-    creds = JSON.parse(integration.creds);
+    tokens = JSON.parse(agent.calendar_token);
   } catch (e) {
-    throw new Error('Failed to parse stored credentials.');
+    throw new Error(`calendar_token is not valid JSON for agent ${agentId}`);
   }
 
+  // Step 2: Set up OAuth2 client
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
@@ -46,39 +26,47 @@ const integration = result.rows[0];
   );
 
   oAuth2Client.setCredentials({
-    access_token: creds.access_token,
-    refresh_token: creds.refresh_token,
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token
   });
 
+  // Step 3: Attempt to refresh token if needed
+  try {
+    const newTokens = await oAuth2Client.getAccessToken();
+    if (newTokens?.token && newTokens.token !== tokens.access_token) {
+      console.log('🔁 Refreshed access token for agent:', agentId);
+
+      tokens.access_token = newTokens.token;
+      await db.query(`UPDATE Agents SET calendar_token = $1 WHERE id = $2`, [
+        JSON.stringify(tokens),
+        agentId
+      ]);
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not refresh token:', err.message);
+  }
+
+  // Step 4: Build calendar event
   const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
 
   const start = new Date(startTime);
-  const end = new Date(start.getTime() + durationMinutes * 60000);
+  const end = new Date(start.getTime() + (agent.meeting_duration_minutes || 30) * 60000);
 
   const event = {
-    summary: title,
-    description,
-    location,
-    start: { dateTime: start.toISOString() },
-    end: { dateTime: end.toISOString() },
-    attendees: recipientEmail ? [{ email: recipientEmail }] : [],
+    summary: agent.meeting_title_template || 'Appointment',
+    start: { dateTime: start.toISOString(), timeZone: agent.timezone || 'America/New_York' },
+    end: { dateTime: end.toISOString(), timeZone: agent.timezone || 'America/New_York' },
+    attendees: [{ email: recipientEmail }],
   };
 
-  try {
-    const res = await calendar.events.insert({
-      calendarId: 'primary',
-      resource: event,
-    });
+  // Step 5: Insert into calendar
+  const resultInsert = await calendar.events.insert({
+    calendarId: 'primary',
+    resource: event
+  });
 
-    console.log('✅ Calendar event created successfully:', res.data.htmlLink);
-    return res.data;
-  } catch (err) {
-    console.error('❌ Failed to create calendar event:', err.response?.data || err.message);
-    throw new Error('Google Calendar API error');
-  }
-}
+  return resultInsert.data;
+};
 
 module.exports = { createCalendarEvent };
-
-
 
