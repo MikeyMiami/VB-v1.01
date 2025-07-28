@@ -15,17 +15,18 @@ async function createCalendarEvent({
     throw new Error('Missing required parameters: agentId or startTime');
   }
 
-  // 🔐 Get OAuth credentials from DB
-  const integration = await new Promise((resolve, reject) => {
-    db.get(
-      `SELECT * FROM Integrations WHERE agent_id = ? AND integration_type = 'google_calendar'`,
-      [agentId],
-      (err, row) => {
-        if (err) return reject(err);
-        resolve(row);
-      }
-    );
-  });
+  // 🔐 Get OAuth credentials from DB (PostgreSQL version)
+const result = await db.query(
+  `SELECT * FROM Integrations WHERE agent_id = $1 AND integration_type = 'google_calendar'`,
+  [agentId]
+);
+
+if (result.rows.length === 0) {
+  throw new Error('No integration found for agent');
+}
+
+const integration = result.rows[0];
+
 
   if (!integration || !integration.creds) {
     throw new Error('Missing or invalid integration credentials for this agent.');
