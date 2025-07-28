@@ -18,6 +18,7 @@ const { Queue, Worker } = require('bullmq');
 const jwt = require('jsonwebtoken');
 const twilio = require('twilio');
 const db = require('./db'); // SQLite DB
+const { streamOpenAI } = require('./stream-gpt');
 const { fetchLeads, bookAppointment } = require('./utils/integrations');
 const sheetsRoutes = require('./routes/sheets');
 const debugRoutes = require('./routes/debug');
@@ -161,7 +162,6 @@ app.use('/voice-agent/stream', require('./routes/voice-agent-stream'));
 app.use('/voice-agent', require('./routes/voice-agent'));
 app.use('/stream-tts', require('./routes/stream-tts'));
 app.use('/gpt', require('./routes/gpt'));
-app.use('/stream-gpt', require('./routes/stream-gpt'));
 app.use('/stream-playback', require('./routes/stream-playback'));
 app.use('/test-ai', require('./routes/test-ai'));
 app.use('/deepgram', require('./routes/deepgram'));
