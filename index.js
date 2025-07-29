@@ -60,11 +60,11 @@ const redisConnection = {
 
 const callQueue = new Queue('calls', { connection: redisConnection });
 
-// cron addition auto
-cron.schedule('*/10 * * * *', async () => {
-  console.log('🔁 Running autopilot...');
-  await runAutopilot();
-});
+// cron addition auto - daily update/on/off - mikey
+//cron.schedule('*/10 * * * *', async () => {
+//  console.log('🔁 Running 10m autopilot...');
+//  await runAutopilot();
+//});
 
 // Worker to process calls
 new Worker('calls', async job => {
@@ -114,11 +114,11 @@ new Worker('calls', async job => {
 }, { connection: redisConnection });
 
 //part 3
-// Cron for autopilot (every hour) - Adds to queue
-cron.schedule('0 * * * *', async () => {
-  const now = new Date();
-  const day = now.toLocaleString('en-us', { weekday: 'long' }).toLowerCase();
-  const hour = now.getHours();
+// Cron for autopilot (every hour) - Adds to queue - mikey daily on/off
+//cron.schedule('0 * * * *', async () => {
+//  const now = new Date();
+//  const day = now.toLocaleString('en-us', { weekday: 'long' }).toLowerCase();
+//  const hour = now.getHours();
 
   try {
     const { rows: activeAgents } = await db.query(
