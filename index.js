@@ -119,6 +119,11 @@ new Worker('calls', async job => {
 //  const now = new Date();
 //  const day = now.toLocaleString('en-us', { weekday: 'long' }).toLowerCase();
 //  const hour = now.getHours();
+cron.schedule('0 * * * *', async () => {
+  const now = new Date();
+  const day = now.toLocaleString('en-us', { weekday: 'long' }).toLowerCase();
+  const hour = now.getHours();
+
 
   try {
     const { rows: activeAgents } = await db.query(
